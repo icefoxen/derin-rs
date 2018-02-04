@@ -36,7 +36,10 @@ pub struct RelPoint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Prim {
     Image,
-    Text(*const str)
+    Text {
+        string: *const str,
+        highlight_range: Option<(usize, usize)>
+    }
 }
 
 impl RelPoint {
@@ -103,7 +106,7 @@ impl Translator {
                         image.rescale
                     ));
                 },
-                (Prim::Text(string), _, Some(theme_text)) => {
+                (Prim::Text{string, highlight_range}, _, Some(theme_text)) => {
                     match font_cache.face(theme_text.face.clone()) {
                         Ok(face) => {
                             self.shaper.shape_text(
@@ -114,7 +117,15 @@ impl Translator {
                                 &mut self.shaped_text
                             ).ok();
 
-                            vertex_buf.extend(TextTranslate::new(abs_rect, &self.shaped_text, theme_text, face, dpi, atlas));
+                            vertex_buf.extend(TextTranslate::new(
+                                abs_rect,
+                                &self.shaped_text,
+                                highlight_range.map(|r| r.0..r.1),
+                                theme_text,
+                                face,
+                                dpi,
+                                atlas
+                            ));
                         },
                         Err(_) => {
                             //TODO: log

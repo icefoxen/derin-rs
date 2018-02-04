@@ -29,6 +29,8 @@ pub enum RescaleRules {
 pub struct ThemeText {
     pub face: ThemeFace,
     pub color: Rgba<Nu8>,
+    pub highlight_bg_color: Rgba<Nu8>,
+    pub highlight_text_color: Rgba<Nu8>,
     pub face_size: u32,
     pub tab_size: u32,
     pub justify: Align2

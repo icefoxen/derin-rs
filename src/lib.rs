@@ -1,4 +1,4 @@
-#![feature(slice_rotate)]
+#![feature(slice_rotate, range_contains)]
 
 pub extern crate dct;
 extern crate dat;
@@ -113,7 +113,8 @@ pub struct Button<H: ButtonHandler> {
     bounds: BoundBox<Point2<i32>>,
     state: ButtonState,
     handler: H,
-    string: String
+    string: String,
+    highlight_start: usize
 }
 
 #[derive(Debug, Clone)]
@@ -142,7 +143,8 @@ impl<H: ButtonHandler> Button<H> {
             update_tag: UpdateTag::new(),
             bounds: BoundBox::new2(0, 0, 0, 0),
             state: ButtonState::Normal,
-            handler, string
+            handler, string,
+            highlight_start: 0
         }
     }
 }
@@ -211,7 +213,10 @@ impl<F, H> Node<H::Action, F> for Button<H>
                     RelPoint::new( 1.0, 0),
                     RelPoint::new( 1.0, 0)
                 ),
-                prim: Prim::Text(&self.string[..])
+                prim: Prim::Text {
+                    string: &self.string[..],
+                    highlight_range: Some((self.highlight_start, self.string.len()))
+                }
             }
         ].iter().cloned());
     }
@@ -232,6 +237,7 @@ impl<F, H> Node<H::Action, F> for Button<H>
                 MouseUp{in_node: true, pressed_in_node, ..} => {
                     match pressed_in_node {
                         true => {
+                            self.highlight_start += 1;
                             action = self.handler.on_click();
                             ButtonState::Hover
                         },

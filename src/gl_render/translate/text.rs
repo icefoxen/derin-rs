@@ -10,17 +10,20 @@ use gl_raii::colors::Rgba;
 use gl_raii::glsl::Nu8;
 
 use glyphydog::{ShapedBuffer, ShapedGlyph, Face, FaceSize, DPI, LoadFlags, RenderMode};
-use dct::hints::Align;
+use dct::hints::{Align, Margins};
 
 use itertools::Itertools;
 use std::vec;
+use std::ops::Range;
 
 
 pub(in gl_render) struct TextTranslate<'a> {
     glyph_draw: GlyphDraw<'a>,
 
+    ascender: i32,
+    descender: i32,
     rect: BoundBox<Point2<i32>>,
-    glyph_iter: GlyphIter<vec::IntoIter<GlyphItem>>,
+    text_render_iter: TextRenderIter<vec::IntoIter<GlyphItem>>,
     vertex_iter: Option<ImageTranslate>
 }
 
@@ -31,7 +34,7 @@ struct GlyphDraw<'a> {
     dpi: DPI
 }
 
-struct GlyphIter<I: Iterator<Item=GlyphItem>> {
+struct TextRenderIter<I: Iterator<Item=GlyphItem>> {
     glyph_items: I,
     v_advance: i32,
     line_start_x: i32,
@@ -39,11 +42,24 @@ struct GlyphIter<I: Iterator<Item=GlyphItem>> {
     cursor: Vector2<i32>,
     x_justify: Align,
     active_run: Run,
+    /// The number of glyphs processed in the run.
+    glyphs_processed_in_run: u32,
     on_hard_break: bool,
     whitespace_overflower: OverflowAdd,
 
     tab_advance: i32,
     bounds_width: i32,
+}
+
+enum TextRender {
+    Glyph {
+        glyph: ShapedGlyph,
+        use_highlight_color: bool
+    },
+    Highlight {
+        start_px: i32,
+        advance: i32
+    }
 }
 
 /// An item in the list that dictates glyph layout.
@@ -94,19 +110,31 @@ struct Run {
     whitespace_advance: i32,
     /// The whitespace at the very end of the line, with no glyphs following.
     trailing_whitespace: i32,
+    glyph_count: u32,
+    highlight: Highlight,
     /// If this run ends the line.
     ends_line: bool
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+struct Highlight {
+    start_px: i32,
+    advance: i32,
+    glyph_start: u32,
+    glyph_count: u32,
 }
 
 impl<'a> TextTranslate<'a> {
     pub fn new(
         rect: BoundBox<Point2<i32>>,
         shaped_text: &'a ShapedBuffer,
+        highlight_range: Option<Range<usize>>,
         text_style: ThemeText,
         face: &'a mut Face<()>,
         dpi: DPI,
         atlas: &'a mut Atlas
     ) -> TextTranslate<'a> {
+        let highlight_range = highlight_range.unwrap_or(0..0);
         // TODO: CACHE HEAP ALLOC
         let mut glyph_items = Vec::new();
         let mut segment_index = 0;
@@ -138,6 +166,7 @@ impl<'a> TextTranslate<'a> {
             };
             // Contains information about the segment's advances. How it's handled depends on where the line breaks.
             let mut segment_run = Run::default();
+            let mut segment_run_start_x = 0;
             // The number of `Word` and `Whitespace` items in the segment.
             let mut segment_item_count = 0;
 
@@ -151,6 +180,15 @@ impl<'a> TextTranslate<'a> {
 
                 // Continue taking glyphs until we hit whitespace.
                 for (glyph, _) in glyphs.peeking_take_while(|&(_, c)| !c.is_whitespace()) {
+                    if highlight_range.contains(glyph.word_str_index + segment.text_range.start) {
+                        if segment_run.highlight.glyph_count == 0 {
+                            segment_run.highlight.glyph_start = glyph_count;
+                            segment_run.highlight.start_px = word_advance;
+                        }
+                        segment_run.highlight.advance += glyph.advance.x;
+                        segment_run.highlight.glyph_count += 1;
+                    }
+
                     glyph_count += 1;
                     word_advance += glyph.advance.x;
                     glyph_items.push(GlyphItem::Glyph(glyph));
@@ -160,6 +198,7 @@ impl<'a> TextTranslate<'a> {
                     segment_run.trailing_whitespace = 0;
 
                     segment_item_count += glyph_count as usize;
+                    segment_run.glyph_count += glyph_count;
                     line_advance += word_advance;
                     segment_run.glyph_advance += word_advance;
                     glyph_items.insert(word_insert_index, GlyphItem::Word{ glyph_count, advance: word_advance });
@@ -184,8 +223,19 @@ impl<'a> TextTranslate<'a> {
                 }
 
                 for (glyph, c) in glyphs.peeking_take_while(|&(_, c)| c.is_whitespace()) {
+                    let highlight_range_contains = highlight_range.contains(glyph.word_str_index + segment.text_range.start);
+                    if highlight_range_contains {
+                        if segment_run.highlight.advance == 0 {
+                            segment_run.highlight.glyph_start = glyph_count;
+                            segment_run.highlight.start_px = word_advance + whitespace_advance;
+                        }
+                        segment_run.highlight.advance += glyph.advance.x;
+                    }
+
                     match c == '\t' {
-                        false => whitespace_advance += glyph.advance.x,
+                        false => {
+                            whitespace_advance += glyph.advance.x;
+                        },
                         // If the whitespace is a tab, push all the accumulated whitespace, begin a
                         // new run and mark off the old run.
                         true => {
@@ -193,6 +243,15 @@ impl<'a> TextTranslate<'a> {
 
                             // Move the advance to the next tab stop.
                             line_advance = ((line_advance/tab_advance) + 1) * tab_advance;
+                            if highlight_range_contains {
+                                segment_run.highlight.advance =
+                                    (
+                                        (
+                                            segment_run_start_x + segment_run.highlight.start_px + segment_run.highlight.advance
+                                        ) / tab_advance + 1
+                                    ) * tab_advance;
+                            }
+
                             // If the last thing in `glyph_items` is a tab, then we're in a sequence of `Tab`s
                             // and the `Run` was already inserted by the first tab.
                             if glyph_items.last() != Some(&GlyphItem::Tab) {
@@ -201,6 +260,7 @@ impl<'a> TextTranslate<'a> {
                             glyph_items.push(GlyphItem::Tab);
                             run = Run::default();
                             segment_run = Run::default();
+                            segment_run_start_x = line_advance;
                             run_insert_index = glyph_items.len();
                         }
                     }
@@ -258,7 +318,9 @@ impl<'a> TextTranslate<'a> {
         }
 
         let face_size = FaceSize::new(text_style.face_size, text_style.face_size);
-        let line_height = (face.metrics_sized(face_size, dpi).unwrap().height / 64) as i32;
+        let font_metrics = face.metrics_sized(face_size, dpi).unwrap();
+        let line_height = (font_metrics.height / 64) as i32;
+        let (ascender, descender) = ((font_metrics.ascender / 64) as i32, (font_metrics.descender / 64) as i32);
 
         let v_advance = match text_style.justify.y {
             Align::Stretch => (rect.height() / num_lines) as i32,
@@ -267,7 +329,7 @@ impl<'a> TextTranslate<'a> {
 
         TextTranslate {
             rect,
-            glyph_iter: GlyphIter {
+            text_render_iter: TextRenderIter {
                 glyph_items: glyph_items.into_iter(),
                 v_advance,
                 cursor: Vector2 {
@@ -282,11 +344,13 @@ impl<'a> TextTranslate<'a> {
                 run_start_x: 0,
                 x_justify: text_style.justify.x,
                 active_run: Run::default(),
+                glyphs_processed_in_run: 0,
                 whitespace_overflower: OverflowAdd::default(),
                 on_hard_break: false,
                 tab_advance,
                 bounds_width: rect.width() as i32,
             },
+            ascender, descender,
             glyph_draw: GlyphDraw{ face, atlas, text_style, dpi },
             vertex_iter: None
         }
@@ -308,16 +372,25 @@ impl OverflowAdd {
     }
 }
 
-impl<I: Iterator<Item=GlyphItem>> Iterator for GlyphIter<I> {
-    type Item = ShapedGlyph;
+impl<I: Iterator<Item=GlyphItem>> Iterator for TextRenderIter<I> {
+    type Item = TextRender;
 
-    fn next(&mut self) -> Option<ShapedGlyph> {
+    fn next(&mut self) -> Option<TextRender> {
         loop {
             match self.glyph_items.next()? {
                 GlyphItem::Glyph(mut glyph) => {
+                    let highlight_range =
+                        self.active_run.highlight.glyph_start..
+                        self.active_run.highlight.glyph_start + self.active_run.highlight.glyph_count;
+                    let use_highlight_color = highlight_range.contains(self.glyphs_processed_in_run);
+
                     glyph.pos = Point2::from_vec(self.cursor);
                     self.cursor += glyph.advance.mul_element_wise(Vector2::new(1, -1));
-                    return Some(glyph);
+                    self.glyphs_processed_in_run += 1;
+                    return Some(TextRender::Glyph {
+                        glyph,
+                        use_highlight_color
+                    });
                 },
                 GlyphItem::Word{..} => (),
                 GlyphItem::Whitespace{advance} => {
@@ -350,11 +423,29 @@ impl<I: Iterator<Item=GlyphItem>> Iterator for GlyphIter<I> {
                     };
                     self.line_start_x = self.cursor.x;
                     self.on_hard_break = hard_break;
+                    continue;
                 },
                 GlyphItem::Run(run) => {
                     self.active_run = run;
+                    self.glyphs_processed_in_run = 0;
                     self.run_start_x = self.cursor.x;
-                    continue;
+                    match run.highlight.advance == 0 {
+                        false => {
+                            let run_advance = run.glyph_advance + run.whitespace_advance;
+                            let highlight_ends_run = run.highlight.start_px + run.highlight.advance >= run_advance;
+
+                            let advance = match (self.x_justify, self.on_hard_break, run.ends_line, highlight_ends_run) {
+                                (Align::Stretch, false, true, true) => self.bounds_width - self.run_start_x - run.highlight.start_px,
+                                _ => run.highlight.advance
+                            };
+
+                            return Some(TextRender::Highlight {
+                                start_px: run.highlight.start_px,
+                                advance
+                            });
+                        },
+                        true => continue
+                    }
                 },
                 GlyphItem::Tab => {
                     self.cursor.x = (((self.cursor.x - self.line_start_x)/self.tab_advance) + 1) * self.tab_advance + self.line_start_x;
@@ -373,9 +464,27 @@ impl<'a> Iterator for TextTranslate<'a> {
             match self.vertex_iter.as_mut().map(|v| v.next()).unwrap_or(None) {
                 Some(vert) => return Some(vert),
                 None => {
-                    let next_glyph = self.glyph_iter.next()?;
-                    self.vertex_iter = Some(self.glyph_draw.glyph_atlas_image(next_glyph, self.rect));
-                    continue;
+                    match self.text_render_iter.next()? {
+                        TextRender::Glyph{glyph: next_glyph, use_highlight_color} => {
+                            self.vertex_iter = Some(self.glyph_draw.glyph_atlas_image(next_glyph, use_highlight_color, self.rect));
+                            continue;
+                        },
+                        TextRender::Highlight{start_px, advance} => {
+                            let highlight_color = self.glyph_draw.text_style.highlight_bg_color;
+                            let rect_start = self.rect.min() + self.text_render_iter.cursor + Vector2::new(start_px, 0);
+                            let highlight_rect = BoundBox::new2(
+                                rect_start.x, rect_start.y - self.ascender,
+                                rect_start.x + advance, rect_start.y - self.descender
+                            );
+                            self.vertex_iter = Some(ImageTranslate::new(
+                                highlight_rect,
+                                self.glyph_draw.atlas.white().cast::<u16>().unwrap(),
+                                highlight_color,
+                                RescaleRules::Slice(Margins::new(0, 0, 0, 0))
+                            ));
+                            continue;
+                        }
+                    }
                 }
             }
         }
@@ -389,6 +498,8 @@ impl Run {
             glyph_advance: 0,
             whitespace_advance: whitespace,
             trailing_whitespace: whitespace,
+            highlight: Highlight::default(),
+            glyph_count: 0,
             ends_line: false
         }
     }
@@ -401,9 +512,32 @@ impl Run {
 
     #[inline]
     fn append_run(mut self, run: Run) -> Run {
+        if run.highlight.advance > 0 {
+            #[cfg(debug_assertions)]
+            {
+                if (run.highlight.start_px > 0 && self.highlight.start_px > 0) ||
+                   (run.highlight.glyph_start > 0 && self.highlight.glyph_start > 0)
+                {
+                    eprintln!("run start px {}, self start px {}", run.highlight.start_px, self.highlight.start_px);
+                    eprintln!("run glyph start {}, self glyph start {}", run.highlight.glyph_start, self.highlight.glyph_start);
+                    panic!("bad run highlight append");
+                }
+            }
+            if self.highlight.advance == 0 {
+                self.highlight.start_px =
+                      run.highlight.start_px
+                    + self.glyph_advance
+                    + self.whitespace_advance;
+                self.highlight.glyph_start = self.glyph_count + run.highlight.glyph_start;
+            }
+
+            self.highlight.advance += run.highlight.advance;
+            self.highlight.glyph_count += run.highlight.glyph_count;
+        }
         self.glyph_advance += run.glyph_advance;
         self.whitespace_advance += run.whitespace_advance;
         self.trailing_whitespace = run.trailing_whitespace;
+        self.glyph_count += run.glyph_count;
         self
     }
 
@@ -414,7 +548,7 @@ impl Run {
 }
 
 impl<'a> GlyphDraw<'a> {
-    fn glyph_atlas_image(&mut self, glyph: ShapedGlyph, rect: BoundBox<Point2<i32>>) -> ImageTranslate {
+    fn glyph_atlas_image(&mut self, glyph: ShapedGlyph, use_highlight_color: bool, rect: BoundBox<Point2<i32>>) -> ImageTranslate {
         let GlyphDraw {
             ref mut face,
             ref mut atlas,
@@ -482,11 +616,15 @@ impl<'a> GlyphDraw<'a> {
             glyph_pos.x + atlas_rect.width() as i32,
             glyph_pos.y + atlas_rect.height() as i32
         );
+        let color = match use_highlight_color {
+            false => text_style.color,
+            true => text_style.highlight_text_color
+        };
 
         ImageTranslate::new(
             glyph_rect,
             atlas_rect.cast::<u16>().unwrap_or(OffsetBox::new2(0, 0, 0, 0)),
-            text_style.color,
+            color,
             RescaleRules::Stretch
         )
     }
