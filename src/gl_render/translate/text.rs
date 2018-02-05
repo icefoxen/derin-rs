@@ -54,6 +54,31 @@ impl RenderString {
         self.cell.get_mut().shaped_glyphs.clear();
         &mut self.string
     }
+
+    pub fn reshape_glyphs(&self,
+        rect: BoundBox<Point2<i32>>,
+        shaped_text: &mut ShapedBuffer,
+        shaper: &mut Shaper,
+        text_style: &ThemeText,
+        face: &mut Face<()>,
+        dpi: DPI
+    ) -> &[ShapedGlyph]
+    {
+        shaper.shape_text(
+            &self.string,
+            face,
+            FaceSize::new(text_style.face_size, text_style.face_size),
+            dpi,
+            &mut shaped_text
+        ).ok();
+        let iter = GlyphIter::new(rect, shaped_text, text_style, face, dpi);
+        let mut cell = self.cell.borrow_mut();
+        cell.shaped_glyphs.clear();
+        cell.shaped_glyphs.extend(iter);
+        shaped_text.clear();
+
+
+    }
 }
 
 struct GlyphDraw<'a> {
