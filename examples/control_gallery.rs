@@ -130,10 +130,10 @@ fn main() {
                 derin::theme::ThemeNode {
                     text: Some(ThemeText {
                         face: ThemeFace::new("./tests/DejaVuSans.ttf", 0).unwrap(),
-                        color: Rgba::new(Nu8(255), Nu8(100), Nu8(100), Nu8(255)),
+                        color: Rgba::new(Nu8(0), Nu8(0), Nu8(0), Nu8(255)),
                         face_size: 16 * 64,
                         tab_size: 8,
-                        justify: Align2::new(Align::Stretch, Align::Center),
+                        justify: Align2::new(Align::Center, Align::Center),
                     }),
                     icon: Some(Rc::new(derin::theme::Image {
                         pixels: unsafe {

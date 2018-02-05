@@ -16,7 +16,9 @@ use theme::Theme;
 use core::render::Theme as CoreTheme;
 
 use self::image::ImageTranslate;
-use self::text::TextTranslate;
+use self::text::{TextTranslate, GlyphIter};
+
+pub use self::text::RenderString;
 
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -36,7 +38,7 @@ pub struct RelPoint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Prim {
     Image,
-    Text(*const str)
+    Text(*const RenderString)
 }
 
 impl RelPoint {
@@ -107,14 +109,15 @@ impl Translator {
                     match font_cache.face(theme_text.face.clone()) {
                         Ok(face) => {
                             self.shaper.shape_text(
-                                unsafe{ &*string },
+                                unsafe{ &*string }.string(),
                                 face,
                                 FaceSize::new(theme_text.face_size, theme_text.face_size),
                                 dpi,
                                 &mut self.shaped_text
                             ).ok();
+                            let shaped_glyphs = GlyphIter::new(abs_rect, &self.shaped_text, &theme_text, face, dpi);
 
-                            vertex_buf.extend(TextTranslate::new(abs_rect, &self.shaped_text, theme_text, face, dpi, atlas));
+                            vertex_buf.extend(TextTranslate::new(abs_rect, theme_text, face, dpi, atlas, shaped_glyphs));
                         },
                         Err(_) => {
                             //TODO: log

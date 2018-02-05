@@ -14,14 +14,46 @@ use dct::hints::Align;
 
 use itertools::Itertools;
 use std::vec;
+use std::cell::RefCell;
 
 
-pub(in gl_render) struct TextTranslate<'a> {
+pub(in gl_render) struct TextTranslate<'a, I: Iterator<Item=ShapedGlyph>> {
     glyph_draw: GlyphDraw<'a>,
 
     rect: BoundBox<Point2<i32>>,
-    glyph_iter: GlyphIter<vec::IntoIter<GlyphItem>>,
+    glyph_iter: I,
     vertex_iter: Option<ImageTranslate>
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct RenderString {
+    string: String,
+    cell: RefCell<RenderStringCell>
+}
+
+#[derive(Default, Debug, Clone)]
+struct RenderStringCell {
+    shaped_glyphs: Vec<ShapedGlyph>
+}
+
+impl RenderString {
+    pub fn new(string: String) -> RenderString {
+        RenderString {
+            string,
+            cell: RefCell::new(RenderStringCell {
+                shaped_glyphs: Vec::new()
+            })
+        }
+    }
+
+    pub fn string(&self) -> &str {
+        &self.string
+    }
+
+    pub fn string_mut(&mut self) -> &mut String {
+        self.cell.get_mut().shaped_glyphs.clear();
+        &mut self.string
+    }
 }
 
 struct GlyphDraw<'a> {
@@ -31,8 +63,8 @@ struct GlyphDraw<'a> {
     dpi: DPI
 }
 
-struct GlyphIter<I: Iterator<Item=GlyphItem>> {
-    glyph_items: I,
+pub struct GlyphIter {
+    glyph_items: vec::IntoIter<GlyphItem>,
     v_advance: i32,
     line_start_x: i32,
     run_start_x: i32,
@@ -98,15 +130,33 @@ struct Run {
     ends_line: bool
 }
 
-impl<'a> TextTranslate<'a> {
+impl<'a, I: Iterator<Item=ShapedGlyph>> TextTranslate<'a, I> {
     pub fn new(
         rect: BoundBox<Point2<i32>>,
-        shaped_text: &'a ShapedBuffer,
         text_style: ThemeText,
         face: &'a mut Face<()>,
         dpi: DPI,
-        atlas: &'a mut Atlas
-    ) -> TextTranslate<'a> {
+        atlas: &'a mut Atlas,
+        shaped_glyphs: I
+    ) -> TextTranslate<'a, I> {
+        TextTranslate {
+            rect,
+            glyph_iter: shaped_glyphs,
+            glyph_draw: GlyphDraw{ face, atlas, text_style, dpi },
+            vertex_iter: None
+        }
+    }
+}
+
+impl GlyphIter {
+    pub fn new(
+        rect: BoundBox<Point2<i32>>,
+        shaped_text: &ShapedBuffer,
+        text_style: &ThemeText,
+        face: &mut Face<()>,
+        dpi: DPI
+    ) -> GlyphIter
+    {
         // TODO: CACHE HEAP ALLOC
         let mut glyph_items = Vec::new();
         let mut segment_index = 0;
@@ -265,30 +315,25 @@ impl<'a> TextTranslate<'a> {
             _ => line_height
         };
 
-        TextTranslate {
-            rect,
-            glyph_iter: GlyphIter {
-                glyph_items: glyph_items.into_iter(),
-                v_advance,
-                cursor: Vector2 {
-                    x: 0,
-                    y: match text_style.justify.y {
-                        Align::Center => (rect.height() as i32 - (line_height * num_lines as i32)) / 2,
-                        Align::End => rect.height() as i32 - (line_height * num_lines as i32),
-                        _ => 0
-                    }
-                },
-                line_start_x: 0,
-                run_start_x: 0,
-                x_justify: text_style.justify.x,
-                active_run: Run::default(),
-                whitespace_overflower: OverflowAdd::default(),
-                on_hard_break: false,
-                tab_advance,
-                bounds_width: rect.width() as i32,
+        GlyphIter {
+            glyph_items: glyph_items.into_iter(),
+            v_advance,
+            cursor: Vector2 {
+                x: 0,
+                y: match text_style.justify.y {
+                    Align::Center => (rect.height() as i32 - (line_height * num_lines as i32)) / 2,
+                    Align::End => rect.height() as i32 - (line_height * num_lines as i32),
+                    _ => 0
+                }
             },
-            glyph_draw: GlyphDraw{ face, atlas, text_style, dpi },
-            vertex_iter: None
+            line_start_x: 0,
+            run_start_x: 0,
+            x_justify: text_style.justify.x,
+            active_run: Run::default(),
+            whitespace_overflower: OverflowAdd::default(),
+            on_hard_break: false,
+            tab_advance,
+            bounds_width: rect.width() as i32,
         }
     }
 }
@@ -308,7 +353,7 @@ impl OverflowAdd {
     }
 }
 
-impl<I: Iterator<Item=GlyphItem>> Iterator for GlyphIter<I> {
+impl Iterator for GlyphIter {
     type Item = ShapedGlyph;
 
     fn next(&mut self) -> Option<ShapedGlyph> {
@@ -365,7 +410,7 @@ impl<I: Iterator<Item=GlyphItem>> Iterator for GlyphIter<I> {
     }
 }
 
-impl<'a> Iterator for TextTranslate<'a> {
+impl<'a, I: Iterator<Item=ShapedGlyph>> Iterator for TextTranslate<'a, I> {
     type Item = GLVertex;
 
     fn next(&mut self) -> Option<GLVertex> {
