@@ -3,7 +3,7 @@ use gl_render::atlas::Atlas;
 use gl_render::translate::image::ImageTranslate;
 use theme::{ThemeText, RescaleRules};
 
-use cgmath::{EuclideanSpace, ElementWise, Point2, Vector2};
+use cgmath::{EuclideanSpace, ElementWise, Point1, Point2, Vector2};
 use cgmath_geometry::{BoundBox, DimsBox, OffsetBox, Segment, GeoBox};
 
 use gl_raii::colors::Rgba;
@@ -119,16 +119,54 @@ impl RenderString {
     }
 
     pub fn select_on_line(&mut self, segment: Segment<Point2<i32>>) {
-        let start = match self.char_closest_to_cursor(segment.start) {
-            Some(start) => start,
+        let cell = self.cell.borrow();
+        let cell = match *cell {
+            Some(ref cell) => cell,
             None => {self.highlight_range = 0..0; return}
         };
-        let end = match self.char_closest_to_cursor(segment.end) {
-            Some(end) => end,
-            None => {self.highlight_range = 0..0; return}
-        };
+        let shaped_glyphs = &cell.shaped_glyphs;
 
-        self.highlight_range = cmp::min(start, end)..cmp::max(start, end) + 1;
+        let mut range_opt = None;
+        // let mut min_y_dist = None;
+        let bounds = |start, end| BoundBox::new1(cmp::min(start, end), cmp::max(start, end));
+
+        let x_bounds = bounds(segment.start.x, segment.end.x);
+        let y_bounds = bounds(segment.start.y, segment.end.y);
+        for (i, glyph) in shaped_glyphs.iter().enumerate() {
+            let glyph_center = glyph.highlight_rect.center();
+            let glyph_y_bounds = bounds(glyph.highlight_rect.min.y, glyph.highlight_rect.max.y);
+            let glyph_y_dist = cmp::min(
+                (segment.end.y - glyph_y_bounds.min.x).abs(),
+                (segment.end.y - glyph_y_bounds.max.x).abs()
+            );
+            let glyph_in_bounds =
+                x_bounds.contains(Point1::new(glyph_center.x)) &&
+                y_bounds.intersect_rect(glyph_y_bounds).is_some();
+
+            if glyph_in_bounds {
+                match range_opt {
+                    None => {
+                        range_opt = Some(i..i+1);
+                        // min_y_dist = Some(glyph_y_dist);
+                    },
+                    Some(ref mut range) => range.end = i + 1
+                }
+            }
+        }
+
+        // let start = match self.char_closest_to_cursor(segment.start) {
+        //     Some(start) => start,
+        //     None => {self.highlight_range = 0..0; return}
+        // };
+        // let end = match self.char_closest_to_cursor(segment.end) {
+        //     Some(end) => end,
+        //     None => {self.highlight_range = 0..0; return}
+        // };
+
+        match range_opt {
+            Some(range) => self.highlight_range = range,
+            None => self.highlight_range = 0..0
+        }
     }
 
     fn reshape_glyphs<'a, F>(&self,
