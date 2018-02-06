@@ -4,7 +4,7 @@ use gl_render::translate::image::ImageTranslate;
 use theme::{ThemeText, RescaleRules};
 
 use cgmath::{EuclideanSpace, ElementWise, Point2, Vector2};
-use cgmath_geometry::{BoundBox, DimsBox, OffsetBox, GeoBox};
+use cgmath_geometry::{BoundBox, DimsBox, OffsetBox, Segment, GeoBox};
 
 use gl_raii::colors::Rgba;
 use gl_raii::glsl::Nu8;
@@ -13,33 +13,35 @@ use glyphydog::{ShapedBuffer, ShapedGlyph, Face, FaceSize, DPI, LoadFlags, Rende
 use dct::hints::Align;
 
 use itertools::Itertools;
-use std::vec;
+use std::{cmp, vec};
 use std::ops::Range;
 use std::cell::{Ref, RefCell};
 
 
-pub(in gl_render) struct TextTranslate<'a, I: Iterator<Item=RenderGlyph>> {
+pub(in gl_render) struct TextTranslate<'a> {
     glyph_draw: GlyphDraw<'a>,
-    font_ascender: i32,
-    font_descender: i32,
 
     rect: BoundBox<Point2<i32>>,
-    glyph_iter: I,
+    glyph_slice_index: usize,
+    glyph_slice: Ref<'a, [RenderGlyph]>,
     highlight_range: Range<usize>,
     highlight_vertex_iter: Option<ImageTranslate>,
     glyph_vertex_iter: Option<ImageTranslate>
 }
 
-#[derive(Default, Debug, Clone)]
-pub struct RenderString {
-    string: String,
-    cell: RefCell<Option<RenderStringCell>>
+#[derive(Debug, Clone, Copy)]
+pub struct RenderGlyph {
+    pos: Point2<i32>,
+    highlight_rect: BoundBox<Point2<i32>>,
+    str_index: usize,
+    glyph_index: Option<u32>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum RenderGlyph {
-    Visible(ShapedGlyph),
-    Whitespace(ShapedGlyph)
+#[derive(Debug, Clone)]
+pub struct RenderString {
+    string: String,
+    highlight_range: Range<usize>,
+    cell: RefCell<Option<RenderStringCell>>
 }
 
 #[derive(Debug, Clone)]
@@ -47,13 +49,14 @@ struct RenderStringCell {
     shaped_glyphs: Vec<RenderGlyph>,
     text_style: ThemeText,
     dpi: DPI,
-    draw_rect: BoundBox<Point2<i32>>
+    draw_rect: BoundBox<Point2<i32>>,
 }
 
 impl RenderString {
     pub fn new(string: String) -> RenderString {
         RenderString {
             string,
+            highlight_range: 0..0,
             cell: RefCell::new(None)
         }
     }
@@ -67,7 +70,68 @@ impl RenderString {
         &mut self.string
     }
 
-    pub fn reshape_glyphs<'a, F>(&self,
+    pub fn cursor_to_str_index(&self, cursor: Point2<i32>) -> Option<usize> {
+        let cell = self.cell.borrow();
+        let cell = match *cell {
+            Some(ref cell) => cell,
+            None => return None
+        };
+        let shaped_glyphs = &cell.shaped_glyphs;
+
+        for glyph in &*shaped_glyphs {
+            if glyph.highlight_rect.contains(cursor) {
+                return Some(glyph.str_index);
+            }
+        }
+
+        None
+    }
+
+    pub fn char_closest_to_cursor(&self, cursor: Point2<i32>) -> Option<usize> {
+        let cell = self.cell.borrow();
+        let cell = match *cell {
+            Some(ref cell) => cell,
+            None => return None
+        };
+        let shaped_glyphs = &cell.shaped_glyphs;
+
+        let mut min_dist_x = i32::max_value();
+        let mut min_dist_y = i32::max_value();
+        let mut min_index = None;
+
+        for (i, glyph) in shaped_glyphs.iter().enumerate() {
+            let rect_center = glyph.highlight_rect.center();
+            let dist_x = (cursor.x - rect_center.x).abs();
+            let dist_y = (cursor.y - rect_center.y).abs();
+            if dist_y < min_dist_y {
+                min_dist_x = dist_x;
+                min_dist_y = dist_y;
+                min_index = Some(i);
+                continue;
+            }
+            if dist_x < min_dist_x && dist_y <= min_dist_y {
+                min_dist_x = dist_x;
+                min_index = Some(i);
+            }
+        }
+
+        min_index
+    }
+
+    pub fn select_on_line(&mut self, segment: Segment<Point2<i32>>) {
+        let start = match self.char_closest_to_cursor(segment.start) {
+            Some(start) => start,
+            None => {self.highlight_range = 0..0; return}
+        };
+        let end = match self.char_closest_to_cursor(segment.end) {
+            Some(end) => end,
+            None => {self.highlight_range = 0..0; return}
+        };
+
+        self.highlight_range = cmp::min(start, end)..cmp::max(start, end) + 1;
+    }
+
+    fn reshape_glyphs<'a, F>(&self,
         rect: BoundBox<Point2<i32>>,
         shape_text: F,
         text_style: &ThemeText,
@@ -133,6 +197,9 @@ struct GlyphIter {
     on_hard_break: bool,
     whitespace_overflower: OverflowAdd,
 
+    font_ascender: i32,
+    font_descender: i32,
+
     tab_advance: i32,
     bounds_width: i32,
 }
@@ -176,7 +243,9 @@ enum GlyphItem {
     /// justification, as a `Run` may be ended by a `Tab`.
     Run(Run),
     /// A character that advances the cursor to the next tab stop in the line.
-    Tab,
+    Tab {
+        str_index: usize
+    }
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,26 +260,24 @@ struct Run {
     ends_line: bool
 }
 
-impl<'a, I: Iterator<Item=RenderGlyph>> TextTranslate<'a, I> {
-    pub fn new(
+impl<'a> TextTranslate<'a> {
+    pub fn new<'b, F>(
         rect: BoundBox<Point2<i32>>,
         text_style: ThemeText,
         face: &'a mut Face<()>,
         dpi: DPI,
         atlas: &'a mut Atlas,
-        shaped_glyphs: I
-    ) -> TextTranslate<'a, I> {
-        let face_size = FaceSize::new(text_style.face_size, text_style.face_size);
-        let font_metrics = face.metrics_sized(face_size, dpi).unwrap();
-        let (ascender, descender) = ((font_metrics.ascender / 64) as i32, (font_metrics.descender / 64) as i32);
-
+        shape_text: F,
+        render_string: &'a RenderString
+    ) -> TextTranslate<'a>
+        where F: FnOnce(&str, &mut Face<()>) -> &'b ShapedBuffer
+    {
         TextTranslate {
             rect,
-            font_ascender: ascender,
-            font_descender: descender,
-            glyph_iter: shaped_glyphs,
+            glyph_slice_index: 0,
+            glyph_slice: render_string.reshape_glyphs(rect, shape_text, &text_style, face, dpi),
             glyph_draw: GlyphDraw{ face, atlas, text_style, dpi },
-            highlight_range: 0..255,
+            highlight_range: render_string.highlight_range.clone(),
             highlight_vertex_iter: None,
             glyph_vertex_iter: None
         }
@@ -316,6 +383,7 @@ impl GlyphIter {
                     match c == '\t' {
                         false => {
                             whitespace_glyph_count += 1;
+                            segment_item_count += 1;
                             glyph_items.push(GlyphItem::WhitespaceGlyph(glyph));
                             whitespace_advance += glyph.advance.x
                         },
@@ -328,10 +396,11 @@ impl GlyphIter {
                             line_advance = ((line_advance/tab_advance) + 1) * tab_advance;
                             // If the last thing in `glyph_items` is a tab, then we're in a sequence of `Tab`s
                             // and the `Run` was already inserted by the first tab.
-                            if glyph_items.last() != Some(&GlyphItem::Tab) {
-                                glyph_items.insert(run_insert_index, GlyphItem::Run(run.append_run(segment_run)));
+                            match glyph_items.last() {
+                                Some(&GlyphItem::Tab{..}) => (),
+                                _ => glyph_items.insert(run_insert_index, GlyphItem::Run(run.append_run(segment_run)))
                             }
-                            glyph_items.push(GlyphItem::Tab);
+                            glyph_items.push(GlyphItem::Tab{ str_index: glyph.str_index });
                             run = Run::default();
                             segment_run = Run::default();
                             run_insert_index = glyph_items.len();
@@ -391,7 +460,10 @@ impl GlyphIter {
         }
 
         let face_size = FaceSize::new(text_style.face_size, text_style.face_size);
-        let line_height = (face.metrics_sized(face_size, dpi).unwrap().height / 64) as i32;
+
+        let font_metrics = face.metrics_sized(face_size, dpi).unwrap();
+        let line_height = (font_metrics.height / 64) as i32;
+        let (ascender, descender) = ((font_metrics.ascender / 64) as i32, (font_metrics.descender / 64) as i32);
 
         let v_advance = match text_style.justify.y {
             Align::Stretch => (rect.height() / num_lines) as i32,
@@ -414,10 +486,21 @@ impl GlyphIter {
             x_justify: text_style.justify.x,
             active_run: Run::default(),
             whitespace_overflower: OverflowAdd::default(),
+
+            font_ascender: ascender,
+            font_descender: descender,
+
             on_hard_break: false,
             tab_advance,
             bounds_width: rect.width() as i32,
         }
+    }
+
+    fn highlight_rect(&self, glyph_pos: Point2<i32>, glyph_advance: i32) -> BoundBox<Point2<i32>> {
+        BoundBox::new2(
+            glyph_pos.x, glyph_pos.y - self.font_ascender,
+            glyph_pos.x + glyph_advance, glyph_pos.y - self.font_descender
+        )
     }
 }
 
@@ -442,14 +525,19 @@ impl Iterator for GlyphIter {
     fn next(&mut self) -> Option<RenderGlyph> {
         loop {
             match self.glyph_items.next()? {
-                GlyphItem::Glyph(mut glyph) => {
-                    glyph.pos = Point2::from_vec(self.cursor);
+                GlyphItem::Glyph(glyph) => {
+                    let render_glyph = RenderGlyph {
+                        pos: Point2::from_vec(self.cursor),
+                        highlight_rect: self.highlight_rect(Point2::from_vec(self.cursor), glyph.advance.x),
+                        str_index: glyph.str_index,
+                        glyph_index: Some(glyph.glyph_index)
+                    };
+
                     self.cursor += glyph.advance.mul_element_wise(Vector2::new(1, -1));
-                    return Some(RenderGlyph::Visible(glyph));
+                    return Some(render_glyph);
                 },
                 GlyphItem::Word{..} => continue,
-                GlyphItem::WhitespaceGlyph(mut glyph) => {
-                    glyph.pos = Point2::from_vec(self.cursor);
+                GlyphItem::WhitespaceGlyph(glyph) => {
                     let cursor_advance = match self.x_justify == Align::Stretch && !self.on_hard_break {
                         false => glyph.advance.x,
                         true => {
@@ -467,9 +555,15 @@ impl Iterator for GlyphIter {
                             ) as i32
                         }
                     };
-                    glyph.advance.x = cursor_advance;
+                    let render_glyph = RenderGlyph {
+                        pos: Point2::from_vec(self.cursor),
+                        highlight_rect: self.highlight_rect(Point2::from_vec(self.cursor), cursor_advance),
+                        str_index: glyph.str_index,
+                        glyph_index: None
+                    };
                     self.cursor.x += cursor_advance;
-                    return Some(RenderGlyph::Whitespace(glyph));
+
+                    return Some(render_glyph);
                 },
                 GlyphItem::Whitespace{..} => continue,
                 GlyphItem::Line{advance, hard_break} => {
@@ -487,16 +581,24 @@ impl Iterator for GlyphIter {
                     self.run_start_x = self.cursor.x;
                     continue;
                 },
-                GlyphItem::Tab => {
-                    self.cursor.x = (((self.cursor.x - self.line_start_x)/self.tab_advance) + 1) * self.tab_advance + self.line_start_x;
-                    continue;
+                GlyphItem::Tab{str_index} => {
+                    let new_cursor_x = (((self.cursor.x - self.line_start_x)/self.tab_advance) + 1) * self.tab_advance + self.line_start_x;
+                    let render_glyph = RenderGlyph {
+                        pos: Point2::from_vec(self.cursor),
+                        highlight_rect: self.highlight_rect(Point2::from_vec(self.cursor), new_cursor_x - self.cursor.x),
+                        str_index,
+                        glyph_index: None
+                    };
+                    self.cursor.x = new_cursor_x;
+
+                    return Some(render_glyph);
                 }
             }
         }
     }
 }
 
-impl<'a, I: Iterator<Item=RenderGlyph>> Iterator for TextTranslate<'a, I> {
+impl<'a> Iterator for TextTranslate<'a> {
     type Item = GLVertex;
 
     fn next(&mut self) -> Option<GLVertex> {
@@ -507,31 +609,34 @@ impl<'a, I: Iterator<Item=RenderGlyph>> Iterator for TextTranslate<'a, I> {
             match next_vertex {
                 Some(vert) => return Some(vert),
                 None => {
-                    let glyph: ShapedGlyph;
-                    match self.glyph_iter.next()? {
-                        RenderGlyph::Visible(next_glyph) => {
-                            self.glyph_vertex_iter = Some(self.glyph_draw.glyph_atlas_image(next_glyph, self.rect));
-                            glyph = next_glyph;
-                            // println!("visible {:#?}", glyph);
-                        },
-                        RenderGlyph::Whitespace(next_glyph) => {
-                            self.glyph_vertex_iter = None;
-                            glyph = next_glyph;
-                            // println!("whitespace {:#?}", glyph);
-                        }
-                    }
+                    let TextTranslate {
+                        ref glyph_slice,
+                        ref mut glyph_slice_index,
+                        ref highlight_range,
+                        ref mut glyph_vertex_iter,
+                        ref mut glyph_draw,
+                        ref mut highlight_vertex_iter,
+                        rect,
+                    } = *self;
+                    let next_glyph = glyph_slice.get(*glyph_slice_index)?;
+                    *glyph_slice_index += 1;
 
-                    self.highlight_vertex_iter = match self.highlight_range.contains(glyph.str_index) {
+                    let is_highlighted = highlight_range.contains(next_glyph.str_index);
+                    *glyph_vertex_iter = next_glyph.glyph_index.map(|glyph_index|
+                        glyph_draw.glyph_atlas_image(
+                            next_glyph.pos,
+                            glyph_index,
+                            is_highlighted,
+                            rect
+                        )
+                    );
+
+                    *highlight_vertex_iter = match is_highlighted {
                         true => {
-                            let rect_start = glyph.pos + self.rect.min().to_vec();
-                            let highlight_rect = BoundBox::new2(
-                                rect_start.x, rect_start.y - self.font_ascender,
-                                rect_start.x + glyph.advance.x, rect_start.y - self.font_descender
-                            );
                             Some(ImageTranslate::new(
-                                highlight_rect,
-                                self.glyph_draw.atlas.white().cast().unwrap_or(OffsetBox::new2(0, 0, 0, 0)),
-                                self.glyph_draw.text_style.highlight_bg_color,
+                                next_glyph.highlight_rect + rect.min().to_vec(),
+                                glyph_draw.atlas.white().cast().unwrap_or(OffsetBox::new2(0, 0, 0, 0)),
+                                glyph_draw.text_style.highlight_bg_color,
                                 RescaleRules::StretchOnPixelCenter
                             ))
                         },
@@ -577,7 +682,7 @@ impl Run {
 }
 
 impl<'a> GlyphDraw<'a> {
-    fn glyph_atlas_image(&mut self, glyph: ShapedGlyph, rect: BoundBox<Point2<i32>>) -> ImageTranslate {
+    fn glyph_atlas_image(&mut self, mut glyph_pos: Point2<i32>, glyph_index: u32, is_highlighted: bool, rect: BoundBox<Point2<i32>>) -> ImageTranslate {
         let GlyphDraw {
             ref mut face,
             ref mut atlas,
@@ -592,10 +697,10 @@ impl<'a> GlyphDraw<'a> {
         let (atlas_rect, glyph_bearing) = atlas.glyph_rect(
             text_style.face.clone(),
             text_style.face_size,
-            glyph.glyph_index,
+            glyph_index,
             || {
                 let glyph_res = face.load_glyph(
-                    glyph.glyph_index,
+                    glyph_index,
                     face_size,
                     dpi,
                     LoadFlags::empty(),
@@ -633,10 +738,9 @@ impl<'a> GlyphDraw<'a> {
             }
         );
 
-        let glyph_pos =
+        glyph_pos +=
             // rect top-left
-            rect.min() +
-            glyph.pos.to_vec() +
+            rect.min().to_vec() +
             // Advance the cursor down the line. Pos is with TLO, so vertical flip
             Vector2::new(1, -1).mul_element_wise(glyph_bearing);
         let glyph_rect = BoundBox::new2(
@@ -649,7 +753,10 @@ impl<'a> GlyphDraw<'a> {
         ImageTranslate::new(
             glyph_rect,
             atlas_rect.cast::<u16>().unwrap_or(OffsetBox::new2(0, 0, 0, 0)),
-            text_style.color,
+            match is_highlighted {
+                false => text_style.color,
+                true => text_style.highlight_text_color
+            },
             RescaleRules::Stretch
         )
     }

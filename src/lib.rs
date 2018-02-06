@@ -29,7 +29,7 @@ use core::render::{RenderFrame, FrameRectStack};
 use core::tree::{NodeIdent, NodeSummary, UpdateTag, NodeSubtrait, NodeSubtraitMut, Node, Parent, OnFocus};
 
 use cgmath::Point2;
-use cgmath_geometry::{BoundBox, DimsBox, GeoBox};
+use cgmath_geometry::{BoundBox, DimsBox, Segment, GeoBox};
 
 use arrayvec::ArrayVec;
 
@@ -113,7 +113,8 @@ pub struct Button<H: ButtonHandler> {
     bounds: BoundBox<Point2<i32>>,
     state: ButtonState,
     handler: H,
-    string: RenderString
+    string: RenderString,
+    drag_start: Option<Point2<i32>>
 }
 
 #[derive(Debug, Clone)]
@@ -143,7 +144,8 @@ impl<H: ButtonHandler> Button<H> {
             bounds: BoundBox::new2(0, 0, 0, 0),
             state: ButtonState::Normal,
             handler,
-            string: RenderString::new(string)
+            string: RenderString::new(string),
+            drag_start: None
         }
     }
 }
@@ -219,7 +221,6 @@ impl<F, H> Node<H::Action, F> for Button<H>
 
     fn on_node_event(&mut self, event: NodeEvent, bubble_source: &[NodeIdent]) -> EventOps<H::Action> {
         use self::NodeEvent::*;
-        use dct::buttons::Key;
 
         let (mut action, focus) = (None, None);
         if bubble_source.len() == 0 {
@@ -227,10 +228,21 @@ impl<F, H> Node<H::Action, F> for Button<H>
                 MouseEnter{buttons_down_in_node, ..} if buttons_down_in_node.is_empty() => ButtonState::Hover,
                 MouseExit{buttons_down_in_node, ..} if buttons_down_in_node.is_empty() => ButtonState::Normal,
                 MouseEnter{..} |
-                MouseExit{..}  |
-                MouseMove{..} => self.state,
-                MouseDown{..} => ButtonState::Clicked,
+                MouseExit{..} => self.state,
+                // MouseMove{}
+                MouseMove{new, ..} => {
+                    if let Some(drag_start) = self.drag_start {
+                        self.string.select_on_line(Segment::new(drag_start, new));
+                        self.update_tag.mark_render_self();
+                    }
+                    self.state
+                },
+                MouseDown{pos, ..} => {
+                    self.drag_start = Some(pos);
+                    ButtonState::Clicked
+                },
                 MouseUp{in_node: true, pressed_in_node, ..} => {
+                    self.drag_start = None;
                     match pressed_in_node {
                         true => {
                             action = self.handler.on_click();
@@ -245,9 +257,6 @@ impl<F, H> Node<H::Action, F> for Button<H>
                 GainFocus => ButtonState::Hover,
                 LoseFocus => ButtonState::Normal,
                 Char(_) => self.state,
-                KeyDown(Key::Tab) => {
-                    self.state
-                }
                 KeyDown(_) => self.state,
                 KeyUp(_) => self.state,
             };

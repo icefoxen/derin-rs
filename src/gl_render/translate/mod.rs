@@ -109,8 +109,13 @@ impl Translator {
                     match font_cache.face(theme_text.face.clone()) {
                         Ok(face) => {
                             let render_string = unsafe{ &*render_string };
-                            let shaped_glyphs = render_string.reshape_glyphs(
+
+                            vertex_buf.extend(TextTranslate::new(
                                 abs_rect,
+                                theme_text.clone(),
+                                face,
+                                dpi,
+                                atlas,
                                 |string, face| {
                                     self.shaper.shape_text(
                                         string,
@@ -121,12 +126,8 @@ impl Translator {
                                     ).ok();
                                     &self.shaped_text
                                 },
-                                &theme_text,
-                                face,
-                                dpi
-                            );
-
-                            vertex_buf.extend(TextTranslate::new(abs_rect, theme_text, face, dpi, atlas, shaped_glyphs.iter().cloned()));
+                                render_string
+                            ));
                         },
                         Err(_) => {
                             //TODO: log
