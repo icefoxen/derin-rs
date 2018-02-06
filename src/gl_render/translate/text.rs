@@ -20,6 +20,8 @@ use std::cell::{Ref, RefCell};
 
 pub(in gl_render) struct TextTranslate<'a, I: Iterator<Item=RenderGlyph>> {
     glyph_draw: GlyphDraw<'a>,
+    font_ascender: i32,
+    font_descender: i32,
 
     rect: BoundBox<Point2<i32>>,
     glyph_iter: I,
@@ -198,11 +200,17 @@ impl<'a, I: Iterator<Item=RenderGlyph>> TextTranslate<'a, I> {
         atlas: &'a mut Atlas,
         shaped_glyphs: I
     ) -> TextTranslate<'a, I> {
+        let face_size = FaceSize::new(text_style.face_size, text_style.face_size);
+        let font_metrics = face.metrics_sized(face_size, dpi).unwrap();
+        let (ascender, descender) = ((font_metrics.ascender / 64) as i32, (font_metrics.descender / 64) as i32);
+
         TextTranslate {
             rect,
+            font_ascender: ascender,
+            font_descender: descender,
             glyph_iter: shaped_glyphs,
             glyph_draw: GlyphDraw{ face, atlas, text_style, dpi },
-            highlight_range: 0..0,
+            highlight_range: 0..255,
             highlight_vertex_iter: None,
             glyph_vertex_iter: None
         }
@@ -439,15 +447,13 @@ impl Iterator for GlyphIter {
                     self.cursor += glyph.advance.mul_element_wise(Vector2::new(1, -1));
                     return Some(RenderGlyph::Visible(glyph));
                 },
-                GlyphItem::Word{..} => (),
-                GlyphItem::WhitespaceGlyph(glyph) => {
-                    return Some(RenderGlyph::Whitespace(glyph));
-                },
-                GlyphItem::Whitespace{advance, ..} => {
+                GlyphItem::Word{..} => continue,
+                GlyphItem::WhitespaceGlyph(mut glyph) => {
+                    glyph.pos = Point2::from_vec(self.cursor);
                     let cursor_advance = match self.x_justify == Align::Stretch && !self.on_hard_break {
-                        false => advance,
+                        false => glyph.advance.x,
                         true => {
-                            let advance_shift = (advance as i64) << OVERFLOW_SHIFT;
+                            let advance_shift = (glyph.advance.x as i64) << OVERFLOW_SHIFT;
                             let fillable_whitespace = match self.active_run.ends_line {
                                 false => self.active_run.whitespace_advance as i64,
                                 true => (self.bounds_width - self.run_start_x - self.active_run.glyph_advance) as i64
@@ -461,9 +467,11 @@ impl Iterator for GlyphIter {
                             ) as i32
                         }
                     };
+                    glyph.advance.x = cursor_advance;
                     self.cursor.x += cursor_advance;
-                    continue;
+                    return Some(RenderGlyph::Whitespace(glyph));
                 },
+                GlyphItem::Whitespace{..} => continue,
                 GlyphItem::Line{advance, hard_break} => {
                     self.cursor.y += self.v_advance;
                     self.cursor.x = match self.x_justify {
@@ -494,9 +502,8 @@ impl<'a, I: Iterator<Item=RenderGlyph>> Iterator for TextTranslate<'a, I> {
     fn next(&mut self) -> Option<GLVertex> {
         loop {
             let next_vertex =
-                self.highlight_vertex_iter.as_mut().map(|v| v.next())
-                    .or_else(|| self.glyph_vertex_iter.as_mut().map(|v| v.next()))
-                    .unwrap_or(None);
+                self.highlight_vertex_iter.as_mut().map(|v| v.next()).unwrap_or(None)
+                    .or_else(|| self.glyph_vertex_iter.as_mut().map(|v| v.next()).unwrap_or(None));
             match next_vertex {
                 Some(vert) => return Some(vert),
                 None => {
@@ -505,17 +512,28 @@ impl<'a, I: Iterator<Item=RenderGlyph>> Iterator for TextTranslate<'a, I> {
                         RenderGlyph::Visible(next_glyph) => {
                             self.glyph_vertex_iter = Some(self.glyph_draw.glyph_atlas_image(next_glyph, self.rect));
                             glyph = next_glyph;
+                            // println!("visible {:#?}", glyph);
                         },
                         RenderGlyph::Whitespace(next_glyph) => {
                             self.glyph_vertex_iter = None;
                             glyph = next_glyph;
+                            // println!("whitespace {:#?}", glyph);
                         }
                     }
 
                     self.highlight_vertex_iter = match self.highlight_range.contains(glyph.str_index) {
                         true => {
-                            let highlight_rect = BoundBox::new2();
-                            Some(ImageTranslate::new())
+                            let rect_start = glyph.pos + self.rect.min().to_vec();
+                            let highlight_rect = BoundBox::new2(
+                                rect_start.x, rect_start.y - self.font_ascender,
+                                rect_start.x + glyph.advance.x, rect_start.y - self.font_descender
+                            );
+                            Some(ImageTranslate::new(
+                                highlight_rect,
+                                self.glyph_draw.atlas.white().cast().unwrap_or(OffsetBox::new2(0, 0, 0, 0)),
+                                self.glyph_draw.text_style.highlight_bg_color,
+                                RescaleRules::StretchOnPixelCenter
+                            ))
                         },
                         false => None
                     };
