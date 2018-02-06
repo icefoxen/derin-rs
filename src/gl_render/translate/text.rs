@@ -14,35 +14,45 @@ use dct::hints::Align;
 
 use itertools::Itertools;
 use std::vec;
-use std::cell::RefCell;
+use std::ops::Range;
+use std::cell::{Ref, RefCell};
 
 
-pub(in gl_render) struct TextTranslate<'a, I: Iterator<Item=ShapedGlyph>> {
+pub(in gl_render) struct TextTranslate<'a, I: Iterator<Item=RenderGlyph>> {
     glyph_draw: GlyphDraw<'a>,
 
     rect: BoundBox<Point2<i32>>,
     glyph_iter: I,
-    vertex_iter: Option<ImageTranslate>
+    highlight_range: Range<usize>,
+    highlight_vertex_iter: Option<ImageTranslate>,
+    glyph_vertex_iter: Option<ImageTranslate>
 }
 
 #[derive(Default, Debug, Clone)]
 pub struct RenderString {
     string: String,
-    cell: RefCell<RenderStringCell>
+    cell: RefCell<Option<RenderStringCell>>
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
+pub enum RenderGlyph {
+    Visible(ShapedGlyph),
+    Whitespace(ShapedGlyph)
+}
+
+#[derive(Debug, Clone)]
 struct RenderStringCell {
-    shaped_glyphs: Vec<ShapedGlyph>
+    shaped_glyphs: Vec<RenderGlyph>,
+    text_style: ThemeText,
+    dpi: DPI,
+    draw_rect: BoundBox<Point2<i32>>
 }
 
 impl RenderString {
     pub fn new(string: String) -> RenderString {
         RenderString {
             string,
-            cell: RefCell::new(RenderStringCell {
-                shaped_glyphs: Vec::new()
-            })
+            cell: RefCell::new(None)
         }
     }
 
@@ -51,33 +61,55 @@ impl RenderString {
     }
 
     pub fn string_mut(&mut self) -> &mut String {
-        self.cell.get_mut().shaped_glyphs.clear();
+        self.cell.get_mut().as_mut().map(|cell| cell.shaped_glyphs.clear());
         &mut self.string
     }
 
-    pub fn reshape_glyphs(&self,
+    pub fn reshape_glyphs<'a, F>(&self,
         rect: BoundBox<Point2<i32>>,
-        shaped_text: &mut ShapedBuffer,
-        shaper: &mut Shaper,
+        shape_text: F,
         text_style: &ThemeText,
         face: &mut Face<()>,
         dpi: DPI
-    ) -> &[ShapedGlyph]
+    ) -> Ref<[RenderGlyph]>
+        where F: FnOnce(&str, &mut Face<()>) -> &'a ShapedBuffer
     {
-        shaper.shape_text(
-            &self.string,
-            face,
-            FaceSize::new(text_style.face_size, text_style.face_size),
-            dpi,
-            &mut shaped_text
-        ).ok();
-        let iter = GlyphIter::new(rect, shaped_text, text_style, face, dpi);
-        let mut cell = self.cell.borrow_mut();
-        cell.shaped_glyphs.clear();
-        cell.shaped_glyphs.extend(iter);
-        shaped_text.clear();
+        {
+            let mut cell_opt = self.cell.borrow_mut();
+            let use_cached_glyphs: bool;
+            let cell = match *cell_opt {
+                Some(ref mut cell) => {
+                    use_cached_glyphs =
+                        cell.shaped_glyphs.len() != 0 &&
+                        (text_style, dpi, rect) ==
+                        (&cell.text_style, cell.dpi, cell.draw_rect);
 
+                    // Update cell contents to reflect new values
+                    cell.text_style = text_style.clone();
+                    cell.dpi = dpi;
+                    cell.draw_rect = rect;
 
+                    cell
+                },
+                None => {
+                    use_cached_glyphs = false;
+                    *cell_opt = Some(RenderStringCell {
+                        shaped_glyphs: Vec::new(),
+                        text_style: text_style.clone(),
+                        dpi,
+                        draw_rect: rect
+                    });
+                    cell_opt.as_mut().unwrap()
+                }
+            };
+            if !use_cached_glyphs {
+                let shaped_buffer = shape_text(&self.string, face);
+                cell.shaped_glyphs.clear();
+                cell.shaped_glyphs.extend(GlyphIter::new(rect, shaped_buffer, text_style, face, dpi));
+            }
+        }
+
+        Ref::map(self.cell.borrow(), |c| &c.as_ref().unwrap().shaped_glyphs[..])
     }
 }
 
@@ -88,7 +120,7 @@ struct GlyphDraw<'a> {
     dpi: DPI
 }
 
-pub struct GlyphIter {
+struct GlyphIter {
     glyph_items: vec::IntoIter<GlyphItem>,
     v_advance: i32,
     line_start_x: i32,
@@ -126,8 +158,10 @@ enum GlyphItem {
     },
     /// Non-tabulating whitespace.
     Whitespace {
+        glyph_count: u32,
         advance: i32
     },
+    WhitespaceGlyph(ShapedGlyph),
     /// Dictates where a new line starts. Contains the horizontal advance of the line,
     /// not including any trailing whitespace.
     Line {
@@ -155,7 +189,7 @@ struct Run {
     ends_line: bool
 }
 
-impl<'a, I: Iterator<Item=ShapedGlyph>> TextTranslate<'a, I> {
+impl<'a, I: Iterator<Item=RenderGlyph>> TextTranslate<'a, I> {
     pub fn new(
         rect: BoundBox<Point2<i32>>,
         text_style: ThemeText,
@@ -168,13 +202,15 @@ impl<'a, I: Iterator<Item=ShapedGlyph>> TextTranslate<'a, I> {
             rect,
             glyph_iter: shaped_glyphs,
             glyph_draw: GlyphDraw{ face, atlas, text_style, dpi },
-            vertex_iter: None
+            highlight_range: 0..0,
+            highlight_vertex_iter: None,
+            glyph_vertex_iter: None
         }
     }
 }
 
 impl GlyphIter {
-    pub fn new(
+    fn new(
         rect: BoundBox<Point2<i32>>,
         shaped_text: &ShapedBuffer,
         text_style: &ThemeText,
@@ -243,16 +279,26 @@ impl GlyphIter {
                 // Add sequence of whitespace characters.
 
                 let mut whitespace_advance = 0;
+                let mut whitespace_glyph_count = 0;
+                let mut whitespace_insert_index = glyph_items.len();
                 macro_rules! push_whitespace {
                     () => {{
                         if whitespace_advance != 0 {
                             line_advance += whitespace_advance;
                             segment_run = segment_run.append_run(Run::tail_whitespace(whitespace_advance));
-                            glyph_items.push(GlyphItem::Whitespace{ advance: whitespace_advance });
+                            glyph_items.insert(
+                                whitespace_insert_index,
+                                GlyphItem::Whitespace {
+                                    glyph_count: whitespace_glyph_count,
+                                    advance: whitespace_advance
+                                }
+                            );
                             segment_item_count += 1;
                             #[allow(unused_assignments)]
                             {
                                 whitespace_advance = 0;
+                                whitespace_glyph_count = 0;
+                                whitespace_insert_index = glyph_items.len();
                             }
                         }
                     }}
@@ -260,7 +306,11 @@ impl GlyphIter {
 
                 for (glyph, c) in glyphs.peeking_take_while(|&(_, c)| c.is_whitespace()) {
                     match c == '\t' {
-                        false => whitespace_advance += glyph.advance.x,
+                        false => {
+                            whitespace_glyph_count += 1;
+                            glyph_items.push(GlyphItem::WhitespaceGlyph(glyph));
+                            whitespace_advance += glyph.advance.x
+                        },
                         // If the whitespace is a tab, push all the accumulated whitespace, begin a
                         // new run and mark off the old run.
                         true => {
@@ -379,18 +429,21 @@ impl OverflowAdd {
 }
 
 impl Iterator for GlyphIter {
-    type Item = ShapedGlyph;
+    type Item = RenderGlyph;
 
-    fn next(&mut self) -> Option<ShapedGlyph> {
+    fn next(&mut self) -> Option<RenderGlyph> {
         loop {
             match self.glyph_items.next()? {
                 GlyphItem::Glyph(mut glyph) => {
                     glyph.pos = Point2::from_vec(self.cursor);
                     self.cursor += glyph.advance.mul_element_wise(Vector2::new(1, -1));
-                    return Some(glyph);
+                    return Some(RenderGlyph::Visible(glyph));
                 },
                 GlyphItem::Word{..} => (),
-                GlyphItem::Whitespace{advance} => {
+                GlyphItem::WhitespaceGlyph(glyph) => {
+                    return Some(RenderGlyph::Whitespace(glyph));
+                },
+                GlyphItem::Whitespace{advance, ..} => {
                     let cursor_advance = match self.x_justify == Align::Stretch && !self.on_hard_break {
                         false => advance,
                         true => {
@@ -435,16 +488,38 @@ impl Iterator for GlyphIter {
     }
 }
 
-impl<'a, I: Iterator<Item=ShapedGlyph>> Iterator for TextTranslate<'a, I> {
+impl<'a, I: Iterator<Item=RenderGlyph>> Iterator for TextTranslate<'a, I> {
     type Item = GLVertex;
 
     fn next(&mut self) -> Option<GLVertex> {
         loop {
-            match self.vertex_iter.as_mut().map(|v| v.next()).unwrap_or(None) {
+            let next_vertex =
+                self.highlight_vertex_iter.as_mut().map(|v| v.next())
+                    .or_else(|| self.glyph_vertex_iter.as_mut().map(|v| v.next()))
+                    .unwrap_or(None);
+            match next_vertex {
                 Some(vert) => return Some(vert),
                 None => {
-                    let next_glyph = self.glyph_iter.next()?;
-                    self.vertex_iter = Some(self.glyph_draw.glyph_atlas_image(next_glyph, self.rect));
+                    let glyph: ShapedGlyph;
+                    match self.glyph_iter.next()? {
+                        RenderGlyph::Visible(next_glyph) => {
+                            self.glyph_vertex_iter = Some(self.glyph_draw.glyph_atlas_image(next_glyph, self.rect));
+                            glyph = next_glyph;
+                        },
+                        RenderGlyph::Whitespace(next_glyph) => {
+                            self.glyph_vertex_iter = None;
+                            glyph = next_glyph;
+                        }
+                    }
+
+                    self.highlight_vertex_iter = match self.highlight_range.contains(glyph.str_index) {
+                        true => {
+                            let highlight_rect = BoundBox::new2();
+                            Some(ImageTranslate::new())
+                        },
+                        false => None
+                    };
+
                     continue;
                 }
             }

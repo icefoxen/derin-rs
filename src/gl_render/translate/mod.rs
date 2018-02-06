@@ -16,7 +16,7 @@ use theme::Theme;
 use core::render::Theme as CoreTheme;
 
 use self::image::ImageTranslate;
-use self::text::{TextTranslate, GlyphIter};
+use self::text::TextTranslate;
 
 pub use self::text::RenderString;
 
@@ -105,19 +105,28 @@ impl Translator {
                         image.rescale
                     ));
                 },
-                (Prim::Text(string), _, Some(theme_text)) => {
+                (Prim::Text(render_string), _, Some(theme_text)) => {
                     match font_cache.face(theme_text.face.clone()) {
                         Ok(face) => {
-                            self.shaper.shape_text(
-                                unsafe{ &*string }.string(),
+                            let render_string = unsafe{ &*render_string };
+                            let shaped_glyphs = render_string.reshape_glyphs(
+                                abs_rect,
+                                |string, face| {
+                                    self.shaper.shape_text(
+                                        string,
+                                        face,
+                                        FaceSize::new(theme_text.face_size, theme_text.face_size),
+                                        dpi,
+                                        &mut self.shaped_text
+                                    ).ok();
+                                    &self.shaped_text
+                                },
+                                &theme_text,
                                 face,
-                                FaceSize::new(theme_text.face_size, theme_text.face_size),
-                                dpi,
-                                &mut self.shaped_text
-                            ).ok();
-                            let shaped_glyphs = GlyphIter::new(abs_rect, &self.shaped_text, &theme_text, face, dpi);
+                                dpi
+                            );
 
-                            vertex_buf.extend(TextTranslate::new(abs_rect, theme_text, face, dpi, atlas, shaped_glyphs));
+                            vertex_buf.extend(TextTranslate::new(abs_rect, theme_text, face, dpi, atlas, shaped_glyphs.iter().cloned()));
                         },
                         Err(_) => {
                             //TODO: log
