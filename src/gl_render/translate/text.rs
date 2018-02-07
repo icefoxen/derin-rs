@@ -14,6 +14,7 @@ use dct::hints::Align;
 
 use itertools::Itertools;
 use std::{cmp, vec};
+use std::cmp::Ordering;
 use std::ops::Range;
 use std::cell::{Ref, RefCell};
 
@@ -70,54 +71,6 @@ impl RenderString {
         &mut self.string
     }
 
-    pub fn cursor_to_str_index(&self, cursor: Point2<i32>) -> Option<usize> {
-        let cell = self.cell.borrow();
-        let cell = match *cell {
-            Some(ref cell) => cell,
-            None => return None
-        };
-        let shaped_glyphs = &cell.shaped_glyphs;
-
-        for glyph in &*shaped_glyphs {
-            if glyph.highlight_rect.contains(cursor) {
-                return Some(glyph.str_index);
-            }
-        }
-
-        None
-    }
-
-    pub fn char_closest_to_cursor(&self, cursor: Point2<i32>) -> Option<usize> {
-        let cell = self.cell.borrow();
-        let cell = match *cell {
-            Some(ref cell) => cell,
-            None => return None
-        };
-        let shaped_glyphs = &cell.shaped_glyphs;
-
-        let mut min_dist_x = i32::max_value();
-        let mut min_dist_y = i32::max_value();
-        let mut min_index = None;
-
-        for (i, glyph) in shaped_glyphs.iter().enumerate() {
-            let rect_center = glyph.highlight_rect.center();
-            let dist_x = (cursor.x - rect_center.x).abs();
-            let dist_y = (cursor.y - rect_center.y).abs();
-            if dist_y < min_dist_y {
-                min_dist_x = dist_x;
-                min_dist_y = dist_y;
-                min_index = Some(i);
-                continue;
-            }
-            if dist_x < min_dist_x && dist_y <= min_dist_y {
-                min_dist_x = dist_x;
-                min_index = Some(i);
-            }
-        }
-
-        min_index
-    }
-
     pub fn select_on_line(&mut self, segment: Segment<Point2<i32>>) {
         let cell = self.cell.borrow();
         let cell = match *cell {
@@ -126,33 +79,53 @@ impl RenderString {
         };
         let shaped_glyphs = &cell.shaped_glyphs;
 
-        let mut range_opt = None;
         // let mut min_y_dist = None;
-        let bounds = |start, end| BoundBox::new1(cmp::min(start, end), cmp::max(start, end));
+        let dist = |min: i32, max: i32, point: i32| match (min.cmp(&point), max.cmp(&point)) {
+            (Ordering::Equal, _) |
+            (_, Ordering::Equal) |
+            (Ordering::Less, Ordering::Greater) => 0,
+            (Ordering::Greater, _) => min - point,
+            (_, Ordering::Less) => point - min
+        };
 
-        let x_bounds = bounds(segment.start.x, segment.end.x);
-        let y_bounds = bounds(segment.start.y, segment.end.y);
+
+        let (mut min_start_x_dist, mut min_start_y_dist) = (i32::max_value(), i32::max_value());
+        let (mut min_end_x_dist, mut min_end_y_dist) = (i32::max_value(), i32::max_value());
+        let (mut start_index, mut end_index) = (0, 0);
+        let mut end_in_range = false;
+
         for (i, glyph) in shaped_glyphs.iter().enumerate() {
-            let glyph_center = glyph.highlight_rect.center();
-            let glyph_y_bounds = bounds(glyph.highlight_rect.min.y, glyph.highlight_rect.max.y);
-            let glyph_y_dist = cmp::min(
-                (segment.end.y - glyph_y_bounds.min.x).abs(),
-                (segment.end.y - glyph_y_bounds.max.x).abs()
-            );
-            let glyph_in_bounds =
-                x_bounds.contains(Point1::new(glyph_center.x)) &&
-                y_bounds.intersect_rect(glyph_y_bounds).is_some();
+            let x_dist = |point: Point2<_>| dist(glyph.highlight_rect.min.x, glyph.highlight_rect.max.x, point.x);
+            let y_dist = |point: Point2<_>| dist(glyph.highlight_rect.min.y, glyph.highlight_rect.max.y, point.y);
+            let glyph_start_x_dist = x_dist(segment.start);
+            let glyph_start_y_dist = y_dist(segment.start);
+            let glyph_end_x_dist = x_dist(segment.end);
+            let glyph_end_y_dist = y_dist(segment.end);
 
-            if glyph_in_bounds {
-                match range_opt {
-                    None => {
-                        range_opt = Some(i..i+1);
-                        // min_y_dist = Some(glyph_y_dist);
-                    },
-                    Some(ref mut range) => range.end = i + 1
-                }
+            if glyph_start_y_dist < min_start_y_dist {
+                min_start_y_dist = glyph_start_y_dist;
+                min_start_x_dist = glyph_start_x_dist;
+                start_index = i;
+            }
+            if glyph_end_y_dist < min_end_y_dist {
+                min_end_y_dist = glyph_end_y_dist;
+                min_end_x_dist = glyph_end_x_dist;
+                end_index = i;
+                end_in_range = glyph.highlight_rect.center().x <= segment.end.x;
+            }
+            if glyph_start_x_dist < min_start_x_dist && glyph_start_y_dist <= min_start_y_dist {
+                min_start_x_dist = glyph_start_x_dist;
+                start_index = i;
+            }
+            if glyph_end_x_dist < min_end_x_dist && glyph_end_y_dist <= min_end_y_dist {
+                min_end_x_dist = glyph_end_x_dist;
+                end_index = i;
+                end_in_range = glyph.highlight_rect.center().x <= segment.end.x;
             }
         }
+
+        end_index += end_in_range as usize;
+        self.highlight_range = cmp::min(start_index, end_index)..cmp::max(start_index, end_index);
 
         // let start = match self.char_closest_to_cursor(segment.start) {
         //     Some(start) => start,
@@ -162,11 +135,6 @@ impl RenderString {
         //     Some(end) => end,
         //     None => {self.highlight_range = 0..0; return}
         // };
-
-        match range_opt {
-            Some(range) => self.highlight_range = range,
-            None => self.highlight_range = 0..0
-        }
     }
 
     fn reshape_glyphs<'a, F>(&self,
