@@ -27,6 +27,7 @@ use std::marker::PhantomData;
 use std::collections::VecDeque;
 
 use tree::*;
+use timer::TimerList;
 use event::{NodeEvent, FocusChange};
 use render::{Renderer, RenderFrame, FrameRectStack};
 use mbseq::MouseButtonSequence;
@@ -48,6 +49,7 @@ pub struct Root<A, N, F>
     event_stamp: u32,
     node_ident_stack: Vec<NodeIdent>,
     meta_tracker: MetaEventTracker,
+    timer_list: TimerList,
     pub root_node: N,
     pub theme: F::Theme,
     _marker: PhantomData<*const F>
@@ -91,6 +93,7 @@ impl<A, N, F> Root<A, N, F>
             event_stamp: 1,
             node_ident_stack: Vec::new(),
             meta_tracker: MetaEventTracker::default(),
+            timer_list: TimerList::new(None),
             root_node, theme,
             _marker: PhantomData
         }
@@ -112,6 +115,7 @@ impl<A, N, F> Root<A, N, F>
             ref mut event_stamp,
             ref mut node_ident_stack,
             ref mut meta_tracker,
+            ref mut timer_list,
             ref mut root_node,
             ref mut theme,
             ..
@@ -164,9 +168,10 @@ impl<A, N, F> Root<A, N, F>
                     let node_update_tag = $node.update_tag();
                     node_update_tag.last_event_stamp.set(*event_stamp);
                     let node_update = node_update_tag.needs_update(root_id);
-                    let no_update = Update::default();
-                    if node_update != no_update {
-                        node_update_tag.mark_update_child_immutable();
+                    if node_update.update_timer {
+                        let mut register = timer_list.new_timer_register(node_update_tag.node_id);
+                        $node.register_timers(&mut register);
+                        node_update_tag.unmark_update_timer();
                     }
                     node_update_tag.last_event_stamp.set(*event_stamp);
 
@@ -826,9 +831,12 @@ impl<A, N, F> Root<A, N, F>
                 }
             }
 
+            let triggered_timers = timer_list.trigger_timers();
+            let triggered_timers = triggered_timers.triggered_timers();
+
 
             // Draw the node tree.
-            if mark_active_nodes_redraw || *force_full_redraw {
+            if mark_active_nodes_redraw || *force_full_redraw || triggered_timers.len() > 0 {
                 let force_full_redraw = *force_full_redraw || renderer.force_full_redraw();
 
                 root_update.render_self |= force_full_redraw;

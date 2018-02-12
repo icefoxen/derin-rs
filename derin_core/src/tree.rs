@@ -125,6 +125,10 @@ macro_rules! id {
 
                 $Name(id as u32)
             }
+
+            pub fn dummy() -> $Name {
+                $Name(!0)
+            }
         }
     }
 }
@@ -201,7 +205,7 @@ pub trait Node<A, F: RenderFrame> {
     fn bounds(&self) -> BoundBox<Point2<i32>>;
     fn bounds_mut(&mut self) -> &mut BoundBox<Point2<i32>>;
     fn render(&self, frame: &mut FrameRectStack<F>);
-    fn register_timers(&self, register: &mut TimerRegister) {}
+    fn register_timers(&self, _register: &mut TimerRegister) {}
     fn on_node_event(&mut self, event: NodeEvent, source_child: &[NodeIdent]) -> EventOps<A>;
     fn subtrait(&self) -> NodeSubtrait<A, F>;
     fn subtrait_mut(&mut self) -> NodeSubtraitMut<A, F>;
@@ -308,6 +312,12 @@ impl UpdateTag {
         self.last_root.set(self.last_root.get() & !UPDATE_LAYOUT);
     }
 
+    #[inline]
+    pub(crate) fn unmark_update_timer(&self) {
+        self.last_root.set(self.last_root.get() & !UPDATE_TIMER);
+    }
+
+    #[inline]
     pub(crate) fn mark_update_child_immutable(&self) {
         self.last_root.set(self.last_root.get() | UPDATE_CHILD);
     }

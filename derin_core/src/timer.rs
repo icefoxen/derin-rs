@@ -1,15 +1,17 @@
 use std::time::{Duration, Instant};
 use tree::NodeID;
+use std::ops::Range;
 
 pub(crate) struct TimerList {
-    start_time: Instant,
     last_trigger: Instant,
     timers_by_dist: Vec<Timer>,
     pub rate_limiter: Option<Duration>
 }
 
-pub(crate) struct TimerIter {
-
+pub(crate) struct TriggeredTimers<'a> {
+    trigger_time: Instant,
+    triggered_range: Range<usize>,
+    timers_by_dist: &'a mut Vec<Timer>
 }
 
 pub struct TimerRegister<'a> {
@@ -21,24 +23,30 @@ pub struct TimerRegister<'a> {
 struct TimerProto {
     name: &'static str,
     frequency: Duration,
+    extra_proto: Option<ExtraProto>
 }
 
-#[derive(Debug, Clone)]
-struct Timer {
-    name: &'static str,
-    node_id: NodeID,
+#[derive(Clone, Copy)]
+struct ExtraProto {
     start_time: Instant,
     last_trigger: Instant,
-    frequency: Duration,
     times_triggered: u64
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Timer {
+    pub name: &'static str,
+    pub node_id: NodeID,
+    pub start_time: Instant,
+    pub last_trigger: Instant,
+    pub frequency: Duration,
+    pub times_triggered: u64
 }
 
 impl TimerList {
     pub fn new(rate_limiter: Option<Duration>) -> TimerList {
-        let cur_time = Instant::now();
         TimerList {
-            start_time: cur_time,
-            last_trigger: cur_time,
+            last_trigger: Instant::now(),
             timers_by_dist: Vec::new(),
             rate_limiter
         }
@@ -51,14 +59,36 @@ impl TimerList {
             timer_list: self
         }
     }
+
+    pub(crate) fn trigger_timers(&mut self) -> TriggeredTimers {
+        let trigger_time = Instant::now();
+        if (trigger_time - self.last_trigger) < self.rate_limiter.unwrap_or(Duration::new(0, 0)) {
+            return TriggeredTimers {
+                triggered_range: 0..0,
+                trigger_time,
+                timers_by_dist: &mut self.timers_by_dist
+            };
+        }
+        let triggered_index = self.timers_by_dist.iter_mut()
+            .take_while(|timer| timer.time_until_trigger(trigger_time) == Duration::new(0, 0))
+            .enumerate().map(|(i, timer)| {timer.trigger(trigger_time); i + 1})
+            .last().unwrap_or(0);
+
+        self.last_trigger = trigger_time;
+        TriggeredTimers {
+            triggered_range: 0..triggered_index,
+            trigger_time,
+            timers_by_dist: &mut self.timers_by_dist
+        }
+    }
 }
 
 impl<'a> TimerRegister<'a> {
     pub fn add_timer(&mut self, name: &'static str, frequency: Duration) {
-        let insert_index = match self.timer_list.timers_by_dist.binary_search_by_key(&frequency, |t| t.frequency) {
+        let insert_index = match self.new_timers.binary_search_by_key(&frequency, |t| t.frequency) {
             Ok(i) | Err(i) => i
         };
-        self.new_timers.insert(insert_index, TimerProto{ name, frequency });
+        self.new_timers.insert(insert_index, TimerProto{ name, frequency, extra_proto: None });
     }
 }
 
@@ -70,38 +100,105 @@ impl<'a> Drop for TimerRegister<'a> {
             ref mut timer_list
         } = *self;
 
+        // Update any timers that are already in the register.
+        timer_list.timers_by_dist.retain(|timer| {
+            if timer.node_id != node_id {
+                return true;
+            }
+
+            for new_timer in new_timers.iter_mut() {
+                if new_timer.name == timer.name {
+                    if new_timer.frequency == timer.frequency {
+                        new_timer.extra_proto = Some(ExtraProto {
+                            start_time: timer.start_time,
+                            last_trigger: timer.last_trigger,
+                            times_triggered: timer.times_triggered
+                        });
+                    }
+                    break;
+                }
+            }
+
+            false
+        });
+
+        // Add the previously-unregistered timers to the timer register
         let cur_time = Instant::now();
         let mut new_timers = new_timers.drain(..).map(|p| Timer {
-            ..unimplemented!()
-        //     name: p.name,
-        //     node_id: node_id,
-        //     start_time: cur_time,
-        //     last_trigger: cur_time,
-        //     frequency: p.frequency,
-        //     times_triggered: 0
-        }).peekable();
+            name: p.name,
+            node_id: node_id,
+            start_time: p.extra_proto.map(|p| p.start_time).unwrap_or(cur_time),
+            last_trigger: p.extra_proto.map(|p| p.last_trigger).unwrap_or(cur_time),
+            frequency: p.frequency,
+            times_triggered: p.extra_proto.map(|p| p.times_triggered).unwrap_or(0)
+        });
+        let mut next_timer: Option<Timer> = new_timers.next();
 
-        // for i in 0.. {
-        //     let timer = match timer_list.timers_by_dist.get(i) {
-        //         Some(timer) => timer,
-        //         None => break
-        //     };
+        let mut index_iter = 0..;
+        loop {
+            let i = index_iter.next().unwrap();
 
-        //     let next_timer = match new_timers.peek() {
-        //         Some(next_timer) => next_timer,
-        //         None => break
-        //     };
+            let next_timer_ref = match next_timer.as_ref() {
+                Some(t) => t,
+                None => break
+            };
 
-        //     let dur_zero = Duration::new(0, 0);
-        //     if next_timer.time_until_trigger(cur_time).unwrap_or(dur_zero) < timer.time_until_trigger(cur_time).unwrap_or(dur_zero) {
-        //         timer_list.timers_by_dist.push(new_timers.next().unwrap());
-        //     }
-        // }
+            let timer = match timer_list.timers_by_dist.get(i) {
+                Some(timer) => *timer,
+                None => Timer::max_frequency(cur_time)
+            };
+
+            if next_timer_ref.time_until_trigger(cur_time) < timer.time_until_trigger(cur_time) {
+                timer_list.timers_by_dist.insert(i, next_timer.take().unwrap());
+                next_timer = new_timers.next();
+                index_iter.start += 1;
+            }
+        }
+
+        debug_assert_eq!(
+            timer_list.timers_by_dist,
+            {
+                let mut sorted = timer_list.timers_by_dist.clone();
+                sorted.sort_unstable_by_key(|t| t.time_until_trigger(cur_time));
+                sorted
+            }
+        );
+    }
+}
+
+impl<'a> TriggeredTimers<'a> {
+    pub fn triggered_timers(&self) -> &[Timer] {
+        &self.timers_by_dist[self.triggered_range.clone()]
+    }
+}
+
+impl<'a> Drop for TriggeredTimers<'a> {
+    fn drop(&mut self) {
+        if self.triggered_range.len() > 0 {
+            let trigger_time = self.trigger_time;
+            self.timers_by_dist.sort_unstable_by_key(|t| t.time_until_trigger(trigger_time));
+        }
     }
 }
 
 impl Timer {
-    fn time_until_trigger(&self, cur_time: Instant) -> Option<Duration> {
-        self.frequency.checked_sub(cur_time - self.last_trigger)
+    fn max_frequency(cur_time: Instant) -> Timer {
+        Timer {
+            name: "",
+            node_id: NodeID::dummy(),
+            start_time: cur_time,
+            last_trigger: cur_time,
+            frequency: Duration::new(!0, 0),
+            times_triggered: 0
+        }
+    }
+
+    fn time_until_trigger(&self, cur_time: Instant) -> Duration {
+        self.frequency.checked_sub(cur_time - self.last_trigger).unwrap_or(Duration::new(0, 0))
+    }
+
+    fn trigger(&mut self, trigger_time: Instant) {
+        self.last_trigger = trigger_time;
+        self.times_triggered += 1;
     }
 }
