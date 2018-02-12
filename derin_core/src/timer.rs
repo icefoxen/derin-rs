@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 use tree::NodeID;
+use std::cmp;
 use std::ops::Range;
 
 pub(crate) struct TimerList {
@@ -80,6 +81,17 @@ impl TimerList {
             trigger_time,
             timers_by_dist: &mut self.timers_by_dist
         }
+    }
+
+    pub fn time_until_trigger(&self) -> Option<Duration> {
+        let now = Instant::now();
+        self.timers_by_dist.get(0).map(|t|
+            cmp::max(
+                t.time_until_trigger(now),
+                self.rate_limiter.map(|limit| limit - (now - self.last_trigger))
+                    .unwrap_or(Duration::new(0, 0))
+            )
+        )
     }
 }
 

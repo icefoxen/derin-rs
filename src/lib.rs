@@ -253,6 +253,8 @@ impl<F, H> Node<H::Action, F> for Button<H>
                 Char(_) => self.state,
                 KeyDown(_) => self.state,
                 KeyUp(_) => self.state,
+                Timer{ name: "hello", .. } => {println!("Timer Recieved!"); self.state},
+                Timer{ .. } => self.state
             };
 
             if new_state != self.state {

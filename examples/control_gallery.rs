@@ -202,7 +202,8 @@ fn main() {
                     };
 
                     if let Some(derin_event) = derin_event_opt {
-                        match for_each_event(derin_event) {
+                        let event_result = for_each_event(derin_event);
+                        match event_result.flow {
                             LoopFlow::Break(b) => {
                                 ret = Some(b);
                                 return ControlFlow::Break;

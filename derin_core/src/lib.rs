@@ -23,11 +23,12 @@ use cgmath::{EuclideanSpace, Point2, Vector2, Array, Bounded};
 use cgmath_geometry::{GeoBox, DimsBox, Segment};
 
 use std::cmp::Ordering;
+use std::time::Duration;
 use std::marker::PhantomData;
 use std::collections::VecDeque;
 
 use tree::*;
-use timer::TimerList;
+use timer::{Timer, TimerList};
 use event::{NodeEvent, FocusChange};
 use render::{Renderer, RenderFrame, FrameRectStack};
 use mbseq::MouseButtonSequence;
@@ -65,7 +66,8 @@ pub enum WindowEvent {
     WindowResize(DimsBox<Point2<u32>>),
     KeyDown(Key),
     KeyUp(Key),
-    Char(char)
+    Char(char),
+    Timer
 }
 
 #[must_use]
@@ -73,6 +75,13 @@ pub enum WindowEvent {
 pub enum LoopFlow<R> {
     Continue,
     Break(R)
+}
+
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EventLoopResult<R> {
+    pub flow: LoopFlow<R>,
+    pub wait_until_call_timer: Option<Duration>
 }
 
 impl<A, N, F> Root<A, N, F>
@@ -100,7 +109,7 @@ impl<A, N, F> Root<A, N, F>
     }
 
     pub fn run_forever<E, AF, BF, R, G>(&mut self, mut gen_events: E, mut on_action: AF, mut bubble_fallthrough: BF, renderer: &mut R) -> Option<G>
-        where E: FnMut(&mut FnMut(WindowEvent) -> LoopFlow<G>) -> Option<G>,
+        where E: FnMut(&mut FnMut(WindowEvent) -> EventLoopResult<G>) -> Option<G>,
               AF: FnMut(A, &mut N, &mut F::Theme) -> LoopFlow<G>,
               BF: FnMut(NodeEvent, &[NodeIdent]) -> Option<A>,
               R: Renderer<Frame=F>
@@ -647,6 +656,30 @@ impl<A, N, F> Root<A, N, F>
                         try_push_action!(focus_node, path.iter().cloned(), NodeEvent::Char(c));
                     }
                 },
+                WindowEvent::Timer => {
+                    let triggered_timers = timer_list.trigger_timers().triggered_timers().to_vec();
+
+                    fn timer_node_id(timer: Timer) -> NodeID {
+                        timer.node_id
+                    }
+                    node_stack.move_over_nodes(
+                        triggered_timers.iter().cloned().map(timer_node_id),
+                        |node, path, timer_index, _| {
+                            let timer = triggered_timers[timer_index];
+                            try_push_action!(
+                                node,
+                                path.iter().cloned(),
+                                NodeEvent::Timer {
+                                    name: timer.name,
+                                    start_time: timer.start_time,
+                                    last_trigger: timer.last_trigger,
+                                    frequency: timer.frequency,
+                                    times_triggered: timer.times_triggered
+                                }
+                            );
+                        }
+                    );
+                }
             }
 
             // Dispatch focus-changing events to the nodes.
@@ -831,12 +864,9 @@ impl<A, N, F> Root<A, N, F>
                 }
             }
 
-            let triggered_timers = timer_list.trigger_timers();
-            let triggered_timers = triggered_timers.triggered_timers();
-
 
             // Draw the node tree.
-            if mark_active_nodes_redraw || *force_full_redraw || triggered_timers.len() > 0 {
+            if mark_active_nodes_redraw || *force_full_redraw {
                 let force_full_redraw = *force_full_redraw || renderer.force_full_redraw();
 
                 root_update.render_self |= force_full_redraw;
@@ -874,7 +904,10 @@ impl<A, N, F> Root<A, N, F>
 
             *force_full_redraw = false;
 
-            return_flow
+            EventLoopResult {
+                flow: return_flow,
+                wait_until_call_timer: timer_list.time_until_trigger()
+            }
         })
     }
 }

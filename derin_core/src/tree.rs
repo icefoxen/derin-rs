@@ -126,6 +126,7 @@ macro_rules! id {
                 $Name(id as u32)
             }
 
+            #[allow(dead_code)]
             pub fn dummy() -> $Name {
                 $Name(!0)
             }
