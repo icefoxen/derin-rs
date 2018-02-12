@@ -20,14 +20,12 @@ pub mod theme;
 use self::gl_render::{ThemedPrim, Prim, RelPoint, RenderString};
 
 use std::cell::RefCell;
-use std::time::Duration;
 
 use dct::hints::{WidgetPos, GridSize};
 use dle::{GridEngine, UpdateHeapCache, SolveError};
 use core::LoopFlow;
 use core::event::{NodeEvent, EventOps};
 use core::render::{RenderFrame, FrameRectStack};
-use core::timer::TimerRegister;
 use core::tree::{NodeIdent, NodeSummary, UpdateTag, NodeSubtrait, NodeSubtraitMut, Node, Parent, OnFocus};
 
 use cgmath::Point2;
@@ -219,10 +217,6 @@ impl<F, H> Node<H::Action, F> for Button<H>
         ].iter().cloned());
     }
 
-    fn register_timers(&self, register: &mut TimerRegister) {
-        register.add_timer("hello", Duration::new(1, 0));
-    }
-
     fn on_node_event(&mut self, event: NodeEvent, bubble_source: &[NodeIdent]) -> EventOps<H::Action> {
         use self::NodeEvent::*;
 
@@ -253,8 +247,7 @@ impl<F, H> Node<H::Action, F> for Button<H>
                 Char(_) => self.state,
                 KeyDown(_) => self.state,
                 KeyUp(_) => self.state,
-                Timer{ name: "hello", .. } => {println!("Timer Recieved!"); self.state},
-                Timer{ .. } => self.state
+                Timer{..} => self.state
             };
 
             if new_state != self.state {
