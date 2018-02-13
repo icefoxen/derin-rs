@@ -26,8 +26,10 @@ pub(in gl_render) struct TextTranslate<'a> {
     glyph_slice_index: usize,
     glyph_slice: Ref<'a, [RenderGlyph]>,
     highlight_range: Range<usize>,
+    cursor_pos: Option<usize>,
     highlight_vertex_iter: Option<ImageTranslate>,
-    glyph_vertex_iter: Option<ImageTranslate>
+    glyph_vertex_iter: Option<ImageTranslate>,
+    cursor_vertex_iter: Option<ImageTranslate>
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -60,6 +62,8 @@ impl RenderString {
         RenderString {
             string,
             highlight_range: 0..0,
+            cursor_pos: 3,
+            draw_cursor: true,
             cell: RefCell::new(None)
         }
     }
@@ -73,6 +77,46 @@ impl RenderString {
     pub fn string_mut(&mut self) -> &mut String {
         self.cell.get_mut().as_mut().map(|cell| cell.shaped_glyphs.clear());
         &mut self.string
+    }
+
+    pub fn move_cursor_vertical(&mut self, dist: isize) {
+        if dist == 0 {
+            return;
+        }
+
+        let cell = self.cell.borrow();
+        let cell = match *cell {
+            Some(ref cell) => cell,
+            None => {self.highlight_range = 0..0; return}
+        };
+        let shaped_glyphs = &cell.shaped_glyphs;
+
+        macro_rules! search_for_glyph {
+            ($iter:expr) => {{
+                let mut glyph_iter = $iter.skip_while(|g| g.str_index != self.cursor_pos);
+                if let Some(cursor_glyph) = glyph_iter.next() {
+                    let cursor_pos_px = cursor_glyph.highlight_rect.min;
+                    let mut min_dist_x = i32::max_value();
+                    let mut min_dist_index = None;
+                    let mut cur_line_y = cursor_glyph.highlight_rect.min.y;
+                    let mut line_delta = 0;
+
+                    for glyph in glyph_iter {
+                        if glyph.highlight_rect.min.y != cur_line_y {
+                            line_delta += 1;
+                            cur_line_y = glyph.highlight_rect.min.y;
+
+                            if line_delta > dist.abs() {
+                                return;
+                            }
+                        }
+                        if line_delta == 0 {
+                            continue;
+                        }
+                    }
+                }
+            }}
+        }
     }
 
     pub fn select_on_line(&mut self, segment: Segment<Point2<i32>>) {
@@ -98,7 +142,7 @@ impl RenderString {
         let (mut start_index, mut end_index) = (0, 0);
         let mut end_in_range = false;
 
-        for (i, glyph) in shaped_glyphs.iter().enumerate() {
+        for glyph in shaped_glyphs.iter() {
             let x_dist = |point: Point2<_>| dist(glyph.highlight_rect.min.x, glyph.highlight_rect.max.x, point.x);
             let y_dist = |point: Point2<_>| dist(glyph.highlight_rect.min.y, glyph.highlight_rect.max.y, point.y);
             let glyph_start_x_dist = x_dist(segment.start);
@@ -109,21 +153,21 @@ impl RenderString {
             if glyph_start_y_dist < min_start_y_dist {
                 min_start_y_dist = glyph_start_y_dist;
                 min_start_x_dist = glyph_start_x_dist;
-                start_index = i;
+                start_index = glyph.str_index;
             }
             if glyph_end_y_dist < min_end_y_dist {
                 min_end_y_dist = glyph_end_y_dist;
                 min_end_x_dist = glyph_end_x_dist;
-                end_index = i;
+                end_index = glyph.str_index;
                 end_in_range = glyph.highlight_rect.center().x <= segment.end.x;
             }
             if glyph_start_x_dist < min_start_x_dist && glyph_start_y_dist <= min_start_y_dist {
                 min_start_x_dist = glyph_start_x_dist;
-                start_index = i;
+                start_index = glyph.str_index;
             }
             if glyph_end_x_dist < min_end_x_dist && glyph_end_y_dist <= min_end_y_dist {
                 min_end_x_dist = glyph_end_x_dist;
-                end_index = i;
+                end_index = glyph.str_index;
                 end_in_range = glyph.highlight_rect.center().x <= segment.end.x;
             }
         }
@@ -279,8 +323,13 @@ impl<'a> TextTranslate<'a> {
             glyph_slice: render_string.reshape_glyphs(rect, shape_text, &text_style, face, dpi),
             glyph_draw: GlyphDraw{ face, atlas, text_style, dpi },
             highlight_range: render_string.highlight_range.clone(),
+            cursor_pos: match render_string.draw_cursor {
+                true => Some(render_string.cursor_pos),
+                false => None
+            },
             highlight_vertex_iter: None,
-            glyph_vertex_iter: None
+            glyph_vertex_iter: None,
+            cursor_vertex_iter: None
         }
     }
 }
@@ -604,9 +653,12 @@ impl<'a> Iterator for TextTranslate<'a> {
 
     fn next(&mut self) -> Option<GLVertex> {
         loop {
+            fn next_in_iter(i: Option<impl Iterator<Item=GLVertex>>) -> Option<GLVertex> {i.map(|mut v| v.next()).unwrap_or(None)}
+            // let next_in_iter = |i| i.map(|v| v.next()).unwrap_or(None);
             let next_vertex =
-                self.highlight_vertex_iter.as_mut().map(|v| v.next()).unwrap_or(None)
-                    .or_else(|| self.glyph_vertex_iter.as_mut().map(|v| v.next()).unwrap_or(None));
+                next_in_iter(self.highlight_vertex_iter.as_mut())
+                    .or_else(|| next_in_iter(self.glyph_vertex_iter.as_mut()))
+                    .or_else(|| next_in_iter(self.cursor_vertex_iter.as_mut()));
             match next_vertex {
                 Some(vert) => return Some(vert),
                 None => {
@@ -614,9 +666,11 @@ impl<'a> Iterator for TextTranslate<'a> {
                         ref glyph_slice,
                         ref mut glyph_slice_index,
                         ref highlight_range,
-                        ref mut glyph_vertex_iter,
+                        ref mut cursor_pos,
                         ref mut glyph_draw,
+                        ref mut glyph_vertex_iter,
                         ref mut highlight_vertex_iter,
+                        ref mut cursor_vertex_iter,
                         rect,
                     } = *self;
                     let next_glyph = glyph_slice.get(*glyph_slice_index)?;
@@ -632,10 +686,12 @@ impl<'a> Iterator for TextTranslate<'a> {
                         )
                     );
 
+                    let highlight_rect = next_glyph.highlight_rect + rect.min().to_vec();
+
                     *highlight_vertex_iter = match is_highlighted {
                         true => {
                             Some(ImageTranslate::new(
-                                next_glyph.highlight_rect + rect.min().to_vec(),
+                                highlight_rect,
                                 glyph_draw.atlas.white().cast().unwrap_or(OffsetBox::new2(0, 0, 0, 0)),
                                 glyph_draw.text_style.highlight_bg_color,
                                 RescaleRules::StretchOnPixelCenter
@@ -643,6 +699,24 @@ impl<'a> Iterator for TextTranslate<'a> {
                         },
                         false => None
                     };
+
+                    *cursor_vertex_iter = cursor_pos.and_then(|pos| {
+                        let base_pos = if pos == next_glyph.str_index {
+                            Some(highlight_rect.min())
+                        } else if pos == next_glyph.str_index + 1 {
+                            Some(Point2::new(highlight_rect.max().x, highlight_rect.min().y))
+                        } else {None};
+
+                        base_pos.map(|pos| {
+                            *cursor_pos = None;
+                            ImageTranslate::new(
+                                BoundBox::new(pos, pos + Vector2::new(1, highlight_rect.height())),
+                                glyph_draw.atlas.white().cast().unwrap_or(OffsetBox::new2(0, 0, 0, 0)),
+                                glyph_draw.text_style.color,
+                                RescaleRules::StretchOnPixelCenter
+                            )
+                        })
+                    });
 
                     continue;
                 }

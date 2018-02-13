@@ -1,4 +1,4 @@
-#![feature(slice_rotate, nll, range_contains)]
+#![feature(slice_rotate, nll, range_contains, universal_impl_trait)]
 
 pub extern crate dct;
 extern crate dat;
