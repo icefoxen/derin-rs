@@ -42,6 +42,8 @@ pub struct RenderGlyph {
 pub struct RenderString {
     string: String,
     pub highlight_range: Range<usize>,
+    pub cursor_pos: usize,
+    pub draw_cursor: bool,
     cell: RefCell<Option<RenderStringCell>>
 }
 

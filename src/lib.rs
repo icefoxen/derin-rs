@@ -124,6 +124,13 @@ pub struct Label {
 }
 
 #[derive(Debug, Clone)]
+pub struct EditBox {
+    update_tag: UpdateTag,
+    bounds: BoundBox<Point2<i32>>,
+    string: RenderString
+}
+
+#[derive(Debug, Clone)]
 pub struct Group<C, L>
     where L: NodeLayout
 {
@@ -167,6 +174,25 @@ impl<H: ButtonHandler> Button<H> {
 impl Label {
     pub fn new(string: String) -> Label {
         Label {
+            update_tag: UpdateTag::new(),
+            bounds: BoundBox::new2(0, 0, 0, 0),
+            string: RenderString::new(string)
+        }
+    }
+
+    pub fn string(&self) -> &str {
+        self.string.string()
+    }
+
+    pub fn string_mut(&mut self) -> &mut String {
+        self.update_tag.mark_render_self();
+        self.string.string_mut()
+    }
+}
+
+impl EditBox {
+    pub fn new(string: String) -> EditBox {
+        EditBox {
             update_tag: UpdateTag::new(),
             bounds: BoundBox::new2(0, 0, 0, 0),
             string: RenderString::new(string)
@@ -331,6 +357,73 @@ impl<A, F> Node<A, F> for Label
         frame.upload_primitives([
             ThemedPrim {
                 theme_path: "Label",
+                min: Point2::new(
+                    RelPoint::new(-1.0, 0),
+                    RelPoint::new(-1.0, 0),
+                ),
+                max: Point2::new(
+                    RelPoint::new( 1.0, 0),
+                    RelPoint::new( 1.0, 0)
+                ),
+                prim: Prim::Text(&self.string)
+            }
+        ].iter().cloned());
+    }
+
+    #[inline]
+    fn on_node_event(&mut self, _: NodeEvent, _: &[NodeIdent]) -> EventOps<A> {
+        EventOps {
+            action: None,
+            focus: None,
+            bubble: true
+        }
+    }
+
+    #[inline]
+    fn subtrait(&self) -> NodeSubtrait<A, F> {
+        NodeSubtrait::Node(self)
+    }
+
+    #[inline]
+    fn subtrait_mut(&mut self) -> NodeSubtraitMut<A, F> {
+        NodeSubtraitMut::Node(self)
+    }
+}
+
+impl<A, F> Node<A, F> for EditBox
+    where F: RenderFrame<Primitive=ThemedPrim>
+{
+    #[inline]
+    fn update_tag(&self) -> &UpdateTag {
+        &self.update_tag
+    }
+
+    #[inline]
+    fn bounds(&self) -> BoundBox<Point2<i32>> {
+        self.bounds
+    }
+
+    #[inline]
+    fn bounds_mut(&mut self) -> &mut BoundBox<Point2<i32>> {
+        &mut self.bounds
+    }
+
+    fn render(&self, frame: &mut FrameRectStack<F>) {
+        frame.upload_primitives([
+            ThemedPrim {
+                theme_path: "EditBox",
+                min: Point2::new(
+                    RelPoint::new(-1.0, 0),
+                    RelPoint::new(-1.0, 0),
+                ),
+                max: Point2::new(
+                    RelPoint::new( 1.0, 0),
+                    RelPoint::new( 1.0, 0)
+                ),
+                prim: Prim::Image
+            },
+            ThemedPrim {
+                theme_path: "EditBox",
                 min: Point2::new(
                     RelPoint::new(-1.0, 0),
                     RelPoint::new(-1.0, 0),
