@@ -1,4 +1,4 @@
-#![feature(slice_rotate, nll, range_contains, universal_impl_trait)]
+#![feature(slice_rotate, nll, range_contains, conservative_impl_trait, universal_impl_trait)]
 
 pub extern crate dct;
 extern crate dat;
@@ -17,15 +17,18 @@ extern crate itertools;
 pub mod gl_render;
 pub mod theme;
 
-use self::gl_render::{ThemedPrim, Prim, RelPoint, RenderString};
+use self::gl_render::{ThemedPrim, Prim, RelPoint, EditString, RenderString};
 
 use std::cell::RefCell;
+use std::time::Duration;
 
 use dct::hints::{WidgetPos, GridSize};
+use dct::buttons::Key;
 use dle::{GridEngine, UpdateHeapCache, SolveError};
 use core::LoopFlow;
-use core::event::{NodeEvent, EventOps};
+use core::event::{NodeEvent, EventOps, FocusChange};
 use core::render::{RenderFrame, FrameRectStack};
+use core::timer::TimerRegister;
 use core::tree::{NodeIdent, NodeSummary, UpdateTag, NodeSubtrait, NodeSubtraitMut, Node, Parent, OnFocus};
 
 use cgmath::Point2;
@@ -127,7 +130,7 @@ pub struct Label {
 pub struct EditBox {
     update_tag: UpdateTag,
     bounds: BoundBox<Point2<i32>>,
-    string: RenderString
+    string: EditString
 }
 
 #[derive(Debug, Clone)]
@@ -195,17 +198,17 @@ impl EditBox {
         EditBox {
             update_tag: UpdateTag::new(),
             bounds: BoundBox::new2(0, 0, 0, 0),
-            string: RenderString::new(string)
+            string: EditString::new(RenderString::new(string))
         }
     }
 
     pub fn string(&self) -> &str {
-        self.string.string()
+        self.string.render_string.string()
     }
 
     pub fn string_mut(&mut self) -> &mut String {
         self.update_tag.mark_render_self();
-        self.string.string_mut()
+        self.string.render_string.string_mut()
     }
 }
 
@@ -273,7 +276,7 @@ impl<F, H> Node<H::Action, F> for Button<H>
                     RelPoint::new( 1.0, 0),
                     RelPoint::new( 1.0, 0)
                 ),
-                prim: Prim::Text(&self.string)
+                prim: Prim::String(&self.string)
             }
         ].iter().cloned());
     }
@@ -281,7 +284,6 @@ impl<F, H> Node<H::Action, F> for Button<H>
     fn on_node_event(&mut self, event: NodeEvent, bubble_source: &[NodeIdent]) -> EventOps<H::Action> {
         use self::NodeEvent::*;
 
-        self.update_tag.mark_update_timer();
         let (mut action, focus) = (None, None);
         if bubble_source.len() == 0 {
             let new_state = match event {
@@ -365,7 +367,7 @@ impl<A, F> Node<A, F> for Label
                     RelPoint::new( 1.0, 0),
                     RelPoint::new( 1.0, 0)
                 ),
-                prim: Prim::Text(&self.string)
+                prim: Prim::String(&self.string)
             }
         ].iter().cloned());
     }
@@ -432,17 +434,51 @@ impl<A, F> Node<A, F> for EditBox
                     RelPoint::new( 1.0, 0),
                     RelPoint::new( 1.0, 0)
                 ),
-                prim: Prim::Text(&self.string)
+                prim: Prim::EditString(&self.string)
             }
         ].iter().cloned());
     }
 
-    #[inline]
-    fn on_node_event(&mut self, _: NodeEvent, _: &[NodeIdent]) -> EventOps<A> {
+    fn on_node_event(&mut self, event: NodeEvent, _: &[NodeIdent]) -> EventOps<A> {
+        use self::NodeEvent::*;
+        use dct::buttons::MouseButton;
+
+        let mut focus = None;
+        match event {
+            KeyDown(key) => loop {
+                match key {
+                    Key::LArrow => self.string.move_cursor_horizontal(-1),
+                    Key::RArrow => self.string.move_cursor_horizontal(1),
+                    Key::UArrow => self.string.move_cursor_vertical(-1),
+                    Key::DArrow => self.string.move_cursor_vertical(1),
+                    _ => break
+                }
+                self.update_tag
+                    .mark_render_self()
+                    .mark_update_timer();
+                break;
+            },
+            MouseDown{..} => {
+                focus = Some(FocusChange::Take);
+            },
+            GainFocus  |
+            LoseFocus => {self.update_tag.mark_update_timer();},
+            Timer{name: "cursor_flash", times_triggered, ..} => {
+                self.string.draw_cursor = times_triggered % 2 == 0;
+                self.update_tag.mark_render_self();
+            },
+            _ => ()
+        };
         EventOps {
             action: None,
-            focus: None,
+            focus,
             bubble: true
+        }
+    }
+
+    fn register_timers(&self, register: &mut TimerRegister) {
+        if self.update_tag.has_keyboard_focus() {
+            register.add_timer("cursor_flash", Duration::new(1, 0)/2, true);
         }
     }
 

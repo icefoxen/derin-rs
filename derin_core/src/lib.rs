@@ -691,16 +691,16 @@ impl<A, N, F> Root<A, N, F>
                         if path == node_ident_stack {
                             return;
                         }
-                        let update_tag = try_push_action!(node, path.into_iter().cloned() => (*meta_drain), NodeEvent::LoseFocus);
+                        node.update_tag().has_keyboard_focus.set(false);
+                        try_push_action!(node, path.into_iter().cloned() => (*meta_drain), NodeEvent::LoseFocus);
 
-                        update_tag.has_keyboard_focus.set(false);
                         for update_tag in node_stack.nodes().map(|n| n.update_tag()) {
                             update_tag.child_event_recv.set(update_tag.child_event_recv.get() & !ChildEventRecv::KEYBOARD);
                         }
                     }
                     if let Some(NodePath{ node, path }) = node_stack.move_to_path(node_ident_stack.iter().cloned()) {
-                        let update_tag = try_push_action!(node, path.into_iter().cloned() => (*meta_drain), NodeEvent::GainFocus);
-                        update_tag.has_keyboard_focus.set(true);
+                        node.update_tag().has_keyboard_focus.set(true);
+                        try_push_action!(node, path.into_iter().cloned() => (*meta_drain), NodeEvent::GainFocus);
 
                         node_stack.pop();
                         for update_tag in node_stack.nodes().map(|n| n.update_tag()) {
