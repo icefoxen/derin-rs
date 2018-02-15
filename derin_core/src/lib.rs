@@ -34,7 +34,7 @@ use render::{Renderer, RenderFrame, FrameRectStack};
 use mbseq::MouseButtonSequence;
 use node_stack::{NodeStackBase, NodePath, NodeStack};
 use meta_tracker::{MetaEventTracker, MetaDrain, MetaEvent, MetaEventVariant};
-use dct::buttons::{MouseButton, Key, ModiferKeys};
+use dct::buttons::{MouseButton, Key, ModifierKeys};
 
 pub struct Root<A, N, F>
     where N: Node<A, F> + 'static,
@@ -64,8 +64,8 @@ pub enum WindowEvent {
     MouseDown(MouseButton),
     MouseUp(MouseButton),
     WindowResize(DimsBox<Point2<u32>>),
-    KeyDown(Key, ModiferKeys),
-    KeyUp(Key, ModiferKeys),
+    KeyDown(Key, ModifierKeys),
+    KeyUp(Key, ModifierKeys),
     Char(char),
     Timer
 }

@@ -12,6 +12,8 @@ use gullery::glsl::Nu8;
 use glyphydog::{ShapedBuffer, ShapedGlyph, Face, FaceSize, DPI, LoadFlags, RenderMode};
 use dct::hints::Align;
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use itertools::Itertools;
 use std::{cmp, vec};
 use std::cmp::Ordering;
@@ -175,7 +177,7 @@ impl<'a> TextTranslate<'a> {
             rect, text_style, face, dpi, atlas,
             shape_text, &edit_string.render_string,
             edit_string.highlight_range.clone(),
-            match edit_string.draw_cursor {
+            match edit_string.draw_cursor && edit_string.highlight_range.len() == 0 {
                 true => Some(edit_string.cursor_pos),
                 false => None
             }
@@ -892,13 +894,47 @@ impl EditString {
         }
     }
 
-    pub fn move_cursor_horizontal(&mut self, dist: isize) {
+    pub fn move_cursor_horizontal(&mut self, dist: isize, jump_to_word_boundaries: bool, expand_selection: bool) {
+        let cursor_start_pos = self.cursor_pos;
         self.cursor_target_x_px = None;
-        self.cursor_pos = match dist.signum() {
-            0 => return,
-            1 => self.render_string.string[self.cursor_pos..].char_indices().skip(dist as usize).map(|(i, _)| i + self.cursor_pos).next().unwrap_or(self.render_string.string.len()),
-            -1 => self.render_string.string[..self.cursor_pos].char_indices().rev().skip(dist.abs() as usize - 1).map(|(i, _)| i).next().unwrap_or(0),
+        self.cursor_pos = match (self.highlight_range.len() * !expand_selection as usize, dist.signum(), jump_to_word_boundaries) {
+            (_, 0, _) => return,
+            (0, 1, false) =>
+                self.render_string.string[self.cursor_pos..].grapheme_indices(true)
+                    .skip(dist as usize).map(|(i, _)| i + self.cursor_pos)
+                    .next().unwrap_or(self.render_string.string.len()),
+            (0, -1, false) =>
+                self.render_string.string[..self.cursor_pos].grapheme_indices(true)
+                    .rev().skip(dist.abs() as usize - 1).map(|(i, _)| i)
+                    .next().unwrap_or(0),
+            (0, 1, true) =>
+                self.render_string.string[self.cursor_pos..].unicode_words()
+                .skip(dist as usize).next()
+                .map(|word| word.as_ptr() as usize - self.render_string.string.as_ptr() as usize)
+                .unwrap_or(self.render_string.string.len()),
+            (0, -1, true) => self.render_string.string[..self.cursor_pos].unicode_words()
+                .rev().skip(dist.abs() as usize - 1).next()
+                .map(|word| word.as_ptr() as usize - self.render_string.string.as_ptr() as usize)
+                .unwrap_or(0),
+            (_, 1, _) => self.highlight_range.end,
+            (_, -1, _) => self.highlight_range.start,
             _ => unreachable!()
+        };
+        if expand_selection {
+            if self.highlight_range.len() == 0 {
+                self.highlight_range = cursor_start_pos..cursor_start_pos;
+            }
+
+            match (cursor_start_pos == self.highlight_range.start, self.cursor_pos < self.highlight_range.end) {
+                (false, _) => self.highlight_range.end = self.cursor_pos,
+                (true, true) => self.highlight_range.start = self.cursor_pos,
+                (true, false) => {
+                    self.highlight_range.start = self.highlight_range.end;
+                    self.highlight_range.end = self.cursor_pos;
+                }
+            }
+        } else {
+            self.highlight_range = 0..0;
         }
     }
 

@@ -13,6 +13,7 @@ extern crate glutin;
 extern crate arrayvec;
 extern crate glyphydog;
 extern crate itertools;
+extern crate unicode_segmentation;
 
 pub mod gl_render;
 pub mod theme;
@@ -23,7 +24,7 @@ use std::cell::RefCell;
 use std::time::Duration;
 
 use dct::hints::{WidgetPos, GridSize};
-use dct::buttons::Key;
+use dct::buttons::{Key, ModifierKeys};
 use dle::{GridEngine, UpdateHeapCache, SolveError};
 use core::LoopFlow;
 use core::event::{NodeEvent, EventOps, FocusChange};
@@ -449,8 +450,16 @@ impl<A, F> Node<A, F> for EditBox
         match event {
             KeyDown(key, modifiers) => loop {
                 match key {
-                    Key::LArrow => self.string.move_cursor_horizontal(-1),
-                    Key::RArrow => self.string.move_cursor_horizontal(1),
+                    Key::LArrow => self.string.move_cursor_horizontal(
+                        -1,
+                        modifiers.contains(ModifierKeys::CTRL),
+                        modifiers.contains(ModifierKeys::SHIFT)
+                    ),
+                    Key::RArrow => self.string.move_cursor_horizontal(
+                        1,
+                        modifiers.contains(ModifierKeys::CTRL),
+                        modifiers.contains(ModifierKeys::SHIFT)
+                    ),
                     Key::UArrow => self.string.move_cursor_vertical(-1),
                     Key::DArrow => self.string.move_cursor_vertical(1),
                     _ => break

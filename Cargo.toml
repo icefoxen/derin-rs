@@ -8,6 +8,7 @@ glutin = "0.11"
 dat = {path = "./dat"}
 glyphydog = {git = "https://github.com/Osspial/glyphydog.git"}
 itertools = "0.7"
+unicode-segmentation = "1.2"
 
 [dev-dependencies]
 derin_macros = {path = "./derin_macros"}

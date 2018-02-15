@@ -1,4 +1,4 @@
-use dct::buttons::{MouseButton, Key, ModiferKeys};
+use dct::buttons::{MouseButton, Key, ModifierKeys};
 use cgmath::{Point2, Vector2};
 use tree::NodeIdent;
 use arrayvec::ArrayVec;
@@ -66,8 +66,8 @@ pub enum NodeEvent<'a> {
     GainFocus,
     LoseFocus,
     Char(char),
-    KeyDown(Key, ModiferKeys),
-    KeyUp(Key, ModiferKeys),
+    KeyDown(Key, ModifierKeys),
+    KeyUp(Key, ModifierKeys),
     Timer {
         name: &'static str,
         start_time: Instant,
@@ -122,8 +122,8 @@ pub(crate) enum NodeEventOwned {
     GainFocus,
     LoseFocus,
     Char(char),
-    KeyDown(Key, ModiferKeys),
-    KeyUp(Key, ModiferKeys),
+    KeyDown(Key, ModifierKeys),
+    KeyUp(Key, ModifierKeys),
     Timer {
         name: &'static str,
         start_time: Instant,
