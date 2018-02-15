@@ -539,7 +539,6 @@ impl<A, N, F> Root<A, N, F>
                                 button
                             }, to_rootspace: top_node_offset
                         );
-                        mouse_buttons_down.push_button(button);
 
                         let top_update_tag = top_node.update_tag();
                         match top_update_tag.mouse_state.get() {
@@ -555,12 +554,9 @@ impl<A, N, F> Root<A, N, F>
                         }
                         top_update_tag
                     });
+                    mouse_buttons_down.push_button(button);
 
                     node_stack.move_to_hover();
-                    println!();
-                    for node in node_stack.nodes().zip(node_stack.ident()) {
-                        println!("{:?} {:?}", node.1, node.0.update_tag());
-                    }
                     node_stack.drain_to_root(|node, _, _| {
                         let node_update_tag = node.update_tag();
                         node_update_tag.child_event_recv.set(node_update_tag.child_event_recv.get() | button_mask);
