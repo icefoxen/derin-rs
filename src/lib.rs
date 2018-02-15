@@ -32,7 +32,7 @@ use core::timer::TimerRegister;
 use core::tree::{NodeIdent, NodeSummary, UpdateTag, NodeSubtrait, NodeSubtraitMut, Node, Parent, OnFocus};
 
 use cgmath::Point2;
-use cgmath_geometry::{BoundBox, DimsBox, GeoBox};
+use cgmath_geometry::{BoundBox, Segment, DimsBox, GeoBox};
 
 use arrayvec::ArrayVec;
 
@@ -131,7 +131,7 @@ pub struct EditBox {
     update_tag: UpdateTag,
     bounds: BoundBox<Point2<i32>>,
     string: EditString,
-    // select_start: Option<Point2<i32>>
+    select_start: Option<Point2<i32>>
 }
 
 #[derive(Debug, Clone)]
@@ -199,7 +199,8 @@ impl EditBox {
         EditBox {
             update_tag: UpdateTag::new(),
             bounds: BoundBox::new2(0, 0, 0, 0),
-            string: EditString::new(RenderString::new(string))
+            string: EditString::new(RenderString::new(string)),
+            select_start: None
         }
     }
 
@@ -486,13 +487,30 @@ impl<A, F> Node<A, F> for EditBox
                     .mark_render_self()
                     .mark_update_timer();
             }
-            MouseDown{in_node: true, ..} => focus = Some(FocusChange::Take),
+            MouseDown{in_node: true, button, pos} => {
+                focus = Some(FocusChange::Take);
+                if button == MouseButton::Left {
+                    self.select_start = Some(pos);
+                    self.string.select_on_line(Segment::new(pos, pos));
+                    self.update_tag
+                        .mark_render_self()
+                        .mark_update_timer();
+                }
+            },
+            MouseUp{button: MouseButton::Left, ..} => {
+                self.select_start = None;
+                self.update_tag.mark_render_self();
+            }
             MouseDown{in_node: false, ..} => {
                 focus = Some(FocusChange::Remove);
                 self.string.draw_cursor = false;
                 self.update_tag
                     .mark_render_self()
                     .mark_update_timer();
+            },
+            MouseMove{new, ..} if self.select_start.is_some() => {
+                self.string.select_on_line(Segment::new(self.select_start.unwrap(), new));
+                self.update_tag.mark_render_self();
             },
             GainFocus  |
             LoseFocus => {self.update_tag.mark_update_timer();},

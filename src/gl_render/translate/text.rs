@@ -923,7 +923,6 @@ impl EditString {
         let (mut min_start_x_dist, mut min_start_y_dist) = (i32::max_value(), i32::max_value());
         let (mut min_end_x_dist, mut min_end_y_dist) = (i32::max_value(), i32::max_value());
         let (mut start_index, mut end_index) = (0, 0);
-        let mut end_in_range = false;
 
         for glyph in shaped_glyphs.iter() {
             let x_dist = |point: Point2<_>| dist(glyph.highlight_rect.min.x, glyph.highlight_rect.max.x, point.x);
@@ -932,30 +931,28 @@ impl EditString {
             let glyph_start_y_dist = y_dist(segment.start);
             let glyph_end_x_dist = x_dist(segment.end);
             let glyph_end_y_dist = y_dist(segment.end);
+            let highlight_center = glyph.highlight_rect.center();
 
             if glyph_start_y_dist < min_start_y_dist {
                 min_start_y_dist = glyph_start_y_dist;
                 min_start_x_dist = glyph_start_x_dist;
-                start_index = glyph.str_index;
+                start_index = glyph.str_index + (highlight_center.x <= segment.start.x) as usize;
             }
             if glyph_end_y_dist < min_end_y_dist {
                 min_end_y_dist = glyph_end_y_dist;
                 min_end_x_dist = glyph_end_x_dist;
-                end_index = glyph.str_index;
-                end_in_range = glyph.highlight_rect.center().x <= segment.end.x;
+                end_index = glyph.str_index + (highlight_center.x <= segment.end.x) as usize;
             }
             if glyph_start_x_dist < min_start_x_dist && glyph_start_y_dist <= min_start_y_dist {
                 min_start_x_dist = glyph_start_x_dist;
-                start_index = glyph.str_index;
+                start_index = glyph.str_index + (highlight_center.x <= segment.start.x) as usize;
             }
             if glyph_end_x_dist < min_end_x_dist && glyph_end_y_dist <= min_end_y_dist {
                 min_end_x_dist = glyph_end_x_dist;
-                end_index = glyph.str_index;
-                end_in_range = glyph.highlight_rect.center().x <= segment.end.x;
+                end_index = glyph.str_index + (highlight_center.x <= segment.end.x) as usize;
             }
         }
 
-        end_index += end_in_range as usize;
         self.highlight_range = cmp::min(start_index, end_index)..cmp::max(start_index, end_index);
         self.cursor_pos = end_index;
     }
