@@ -263,6 +263,8 @@ impl<'a, A, F: RenderFrame, Root: Node<A, F>> NodeStack<'a, A, F, Root> {
     pub fn move_over_flags<G>(&mut self, mut flags: ChildEventRecv, mut for_each_flag: G) -> usize
         where for<'b> G: FnMut(&'b mut Node<A, F>, &[NodeIdent], Vector2<i32>) -> &'b UpdateTag
     {
+        println!("\ntop_ident {:?}", self.top_ident());
+        println!("base flags {:?}", flags);
         assert_ne!(self.stack.nodes().len(), 0);
 
         let get_update_flags = |update: &UpdateTag| update.child_event_recv.get() | ChildEventRecv::from(update);
@@ -271,6 +273,7 @@ impl<'a, A, F: RenderFrame, Root: Node<A, F>> NodeStack<'a, A, F, Root> {
             let root_update = self.stack.nodes().next().unwrap().update_tag();
             get_update_flags(root_update)
         };
+        println!("culled flags {:?}", flags);
 
         let mut nodes_visited = 0;
         let mut on_flag_trail = None;
@@ -285,6 +288,7 @@ impl<'a, A, F: RenderFrame, Root: Node<A, F>> NodeStack<'a, A, F, Root> {
 
                 self.stack.truncate(cfp_index + 1);
                 on_flag_trail = Some(get_update_flags(cfp_update_tag) & flags);
+                println!("oft {:?}", on_flag_trail);
             }
             let flag_trail_flags = on_flag_trail.unwrap();
             let mut remove_flags = ChildEventRecv::empty();
@@ -295,6 +299,7 @@ impl<'a, A, F: RenderFrame, Root: Node<A, F>> NodeStack<'a, A, F, Root> {
                 ($node:expr, $path:expr, $offset:expr) => {{
                     let update_tag = for_each_flag($node, $path, $offset);
                     let flags_removed = flag_trail_flags - ChildEventRecv::from(update_tag);
+                    println!("call fn remove {:?}", flags_removed);
                     nodes_visited += 1;
                     remove_flags |= flags_removed;
                 }}
@@ -334,6 +339,7 @@ impl<'a, A, F: RenderFrame, Root: Node<A, F>> NodeStack<'a, A, F, Root> {
                                         let child_flags = child_summary.update_tag.child_event_recv.get();
                                         if child_flags & flag_trail_flags != ChildEventRecv::empty() {
                                             on_flag_trail = Some(child_flags & flag_trail_flags);
+                                            println!("oft cull {:?}", on_flag_trail);
                                             child_ident = Some(child_summary.ident);
 
                                             break;

@@ -34,7 +34,7 @@ use render::{Renderer, RenderFrame, FrameRectStack};
 use mbseq::MouseButtonSequence;
 use node_stack::{NodeStackBase, NodePath, NodeStack};
 use meta_tracker::{MetaEventTracker, MetaDrain, MetaEvent, MetaEventVariant};
-use dct::buttons::{MouseButton, Key};
+use dct::buttons::{MouseButton, Key, ModiferKeys};
 
 pub struct Root<A, N, F>
     where N: Node<A, F> + 'static,
@@ -64,8 +64,8 @@ pub enum WindowEvent {
     MouseDown(MouseButton),
     MouseUp(MouseButton),
     WindowResize(DimsBox<Point2<u32>>),
-    KeyDown(Key),
-    KeyUp(Key),
+    KeyDown(Key, ModiferKeys),
+    KeyUp(Key, ModiferKeys),
     Char(char),
     Timer
 }
@@ -524,18 +524,18 @@ impl<A, N, F> Root<A, N, F>
 
 
                 WindowEvent::MouseDown(button) => {
-                    node_stack.move_to_hover();
-
+                    let recv_flags = ChildEventRecv::MOUSE_HOVER | ChildEventRecv::KEYBOARD;
                     let button_mask = ChildEventRecv::mouse_button_mask(button);
-                    {
-                        let top_parent_offset = node_stack.top_parent_offset();
-                        let NodePath{ node: top_node, path } = node_stack.top_mut();
-                        let top_node_offset = top_parent_offset + top_node.bounds().min().to_vec();
+                    node_stack.move_over_flags(recv_flags, |top_node, path, top_parent_offset| {
+                        let bounds_rootspace = top_node.bounds() + top_parent_offset;
+                        let top_node_offset = bounds_rootspace.min.to_vec();
+                        let in_node = bounds_rootspace.contains(*mouse_pos);
 
                         try_push_action!(
                             top_node, path.iter().cloned(),
                             NodeEvent::MouseDown {
                                 pos: *mouse_pos - top_node_offset,
+                                in_node,
                                 button
                             }, to_rootspace: top_node_offset
                         );
@@ -544,15 +544,23 @@ impl<A, N, F> Root<A, N, F>
                         let top_update_tag = top_node.update_tag();
                         match top_update_tag.mouse_state.get() {
                             MouseState::Untracked     |
-                            MouseState::Tracking(..) => unreachable!(),
-                            MouseState::Hovering(mouse_pos, mut top_mbseq) => {
-                                top_update_tag.mouse_state.set(MouseState::Hovering(mouse_pos, *top_mbseq.push_button(button)))
+                            MouseState::Tracking(..) => (),
+                            MouseState::Hovering(mouse_pos, mut top_mbseq) => if in_node {
+                                top_update_tag.mouse_state.set(MouseState::Hovering(mouse_pos, *top_mbseq.push_button(button)));
                             }
                         }
 
-                        top_update_tag.child_event_recv.set(top_update_tag.child_event_recv.get() | button_mask);
-                    }
+                        if in_node {
+                            top_update_tag.child_event_recv.set(top_update_tag.child_event_recv.get() | button_mask)
+                        }
+                        top_update_tag
+                    });
 
+                    node_stack.move_to_hover();
+                    println!();
+                    for node in node_stack.nodes().zip(node_stack.ident()) {
+                        println!("{:?} {:?}", node.1, node.0.update_tag());
+                    }
                     node_stack.drain_to_root(|node, _, _| {
                         let node_update_tag = node.update_tag();
                         node_update_tag.child_event_recv.set(node_update_tag.child_event_recv.get() | button_mask);
@@ -637,14 +645,14 @@ impl<A, N, F> Root<A, N, F>
                         update_tag.child_event_recv.set(update_tag.child_event_recv.get() & !button_mask);
                     }
                 },
-                WindowEvent::KeyDown(key) => {
+                WindowEvent::KeyDown(key, modifiers) => {
                     if let Some(NodePath{ node: focus_node, path }) = node_stack.move_to_keyboard_focus() {
-                        try_push_action!(focus_node, path.iter().cloned(), NodeEvent::KeyDown(key));
+                        try_push_action!(focus_node, path.iter().cloned(), NodeEvent::KeyDown(key, modifiers));
                     }
                 },
-                WindowEvent::KeyUp(key) => {
+                WindowEvent::KeyUp(key, modifiers) => {
                     if let Some(NodePath{ node: focus_node, path }) = node_stack.move_to_keyboard_focus() {
-                        try_push_action!(focus_node, path.iter().cloned(), NodeEvent::KeyUp(key));
+                        try_push_action!(focus_node, path.iter().cloned(), NodeEvent::KeyUp(key, modifiers));
                     }
                 },
                 WindowEvent::Char(c) => {
@@ -721,12 +729,12 @@ impl<A, N, F> Root<A, N, F>
                         FocusChange::Remove => {
                             if let Some(NodePath{ node, path }) = node_stack.move_to_path(node_ident_stack.iter().cloned()) {
                                 if node.update_tag().has_keyboard_focus.get() {
-                                    let update_tag = try_push_action!(
+                                    node.update_tag().has_keyboard_focus.set(false);
+                                    try_push_action!(
                                         node,
                                         path.into_iter().cloned() => (meta_drain),
                                         NodeEvent::LoseFocus
                                     );
-                                    update_tag.has_keyboard_focus.set(false);
                                     for update_tag in node_stack.nodes().map(|n| n.update_tag()) {
                                         update_tag.child_event_recv.set(update_tag.child_event_recv.get() & !ChildEventRecv::KEYBOARD);
                                     }

@@ -957,5 +957,6 @@ impl EditString {
 
         end_index += end_in_range as usize;
         self.highlight_range = cmp::min(start_index, end_index)..cmp::max(start_index, end_index);
+        self.cursor_pos = end_index;
     }
 }

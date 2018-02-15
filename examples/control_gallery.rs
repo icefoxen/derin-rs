@@ -7,7 +7,7 @@ extern crate png;
 extern crate gullery;
 extern crate parking_lot;
 
-use derin::dct::buttons::{MouseButton, Key};
+use derin::dct::buttons::{MouseButton, Key, ModiferKeys};
 use derin::dct::hints::{WidgetPos, NodeSpan, GridSize, Margins, Align, Align2};
 use derin::{ButtonHandler, NodeLayout, Button, EditBox, Group, Label};
 use derin::gl_render::GLRenderer;
@@ -240,9 +240,14 @@ fn main() {
                         GWindowEvent::ReceivedCharacter(c) => WindowEvent::Char(c),
                         GWindowEvent::KeyboardInput{ input, .. } => {
                             if let Some(key) = input.virtual_keycode.and_then(map_key) {
+                                let mut modifiers = ModiferKeys::empty();
+                                modifiers.set(ModiferKeys::SHIFT, input.modifiers.shift);
+                                modifiers.set(ModiferKeys::CTRL, input.modifiers.ctrl);
+                                modifiers.set(ModiferKeys::ALT, input.modifiers.alt);
+                                modifiers.set(ModiferKeys::LOGO, input.modifiers.logo);
                                 match input.state {
-                                    ElementState::Pressed => WindowEvent::KeyDown(key),
-                                    ElementState::Released => WindowEvent::KeyUp(key)
+                                    ElementState::Pressed => WindowEvent::KeyDown(key, modifiers),
+                                    ElementState::Released => WindowEvent::KeyUp(key, modifiers)
                                 }
                             } else {
                                 return ControlFlow::Continue

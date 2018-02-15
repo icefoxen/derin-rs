@@ -130,7 +130,8 @@ pub struct Label {
 pub struct EditBox {
     update_tag: UpdateTag,
     bounds: BoundBox<Point2<i32>>,
-    string: EditString
+    string: EditString,
+    // select_start: Option<Point2<i32>>
 }
 
 #[derive(Debug, Clone)]
@@ -307,10 +308,10 @@ impl<F, H> Node<H::Action, F> for Button<H>
                 MouseExitChild{..} => unreachable!(),
                 GainFocus => ButtonState::Hover,
                 LoseFocus => ButtonState::Normal,
-                Char(_) => self.state,
-                KeyDown(_) => self.state,
-                KeyUp(_) => self.state,
-                Timer{..} => self.state
+                Char(_)     |
+                KeyDown(..) |
+                KeyUp(..)   |
+                Timer{..}  => self.state
             };
 
             if new_state != self.state {
@@ -445,7 +446,7 @@ impl<A, F> Node<A, F> for EditBox
 
         let mut focus = None;
         match event {
-            KeyDown(key) => loop {
+            KeyDown(key, modifiers) => loop {
                 match key {
                     Key::LArrow => self.string.move_cursor_horizontal(-1),
                     Key::RArrow => self.string.move_cursor_horizontal(1),
@@ -485,8 +486,13 @@ impl<A, F> Node<A, F> for EditBox
                     .mark_render_self()
                     .mark_update_timer();
             }
-            MouseDown{..} => {
-                focus = Some(FocusChange::Take);
+            MouseDown{in_node: true, ..} => focus = Some(FocusChange::Take),
+            MouseDown{in_node: false, ..} => {
+                focus = Some(FocusChange::Remove);
+                self.string.draw_cursor = false;
+                self.update_tag
+                    .mark_render_self()
+                    .mark_update_timer();
             },
             GainFocus  |
             LoseFocus => {self.update_tag.mark_update_timer();},
