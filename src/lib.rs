@@ -458,6 +458,33 @@ impl<A, F> Node<A, F> for EditBox
                     .mark_update_timer();
                 break;
             },
+            Char('\u{08}') => { // Backspace
+                let cursor_pos = self.string.cursor_pos();
+                if 0 < cursor_pos {
+                    let removed = self.string.render_string.string_mut().remove(cursor_pos - 1);
+                    *self.string.cursor_pos_mut() -= removed.len_utf8();
+                }
+                self.update_tag
+                    .mark_render_self()
+                    .mark_update_timer();
+            }
+            Char('\u{7F}') => { // Delete
+                let cursor_pos = self.string.cursor_pos();
+                if cursor_pos < self.string.render_string.string().len() {
+                    self.string.render_string.string_mut().remove(cursor_pos);
+                }
+                self.update_tag
+                    .mark_render_self()
+                    .mark_update_timer();
+            }
+            Char(c) => {
+                let insert_at = self.string.cursor_pos();
+                self.string.render_string.string_mut().insert(insert_at, c);
+                *self.string.cursor_pos_mut() += c.len_utf8();
+                self.update_tag
+                    .mark_render_self()
+                    .mark_update_timer();
+            }
             MouseDown{..} => {
                 focus = Some(FocusChange::Take);
             },

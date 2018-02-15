@@ -103,7 +103,7 @@ fn main() {
             button: Button::new("good day\tgood day good day good day good day \nHello Hello".to_string(), BasicHandler),
             nested: Group::new(NestedContainer {
                 label: Label::new("Nested Container".to_string()),
-                edit_box: EditBox::new("On community that I've been particularly proud of being a part".to_string()),
+                edit_box: EditBox::new("A Text Box".to_string()),
                 button0: Button::new("tr tr".to_string(), BasicHandler),
                 button1: Button::new("Hello World".to_string(), BasicHandler)
             }, BasicLayoutVertical)
