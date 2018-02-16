@@ -926,6 +926,10 @@ impl EditString {
             }
 
             match (cursor_start_pos == self.highlight_range.start, self.cursor_pos < self.highlight_range.end) {
+                (false, true) if self.cursor_pos < self.highlight_range.start => {
+                    self.highlight_range.end = self.highlight_range.start;
+                    self.highlight_range.start = self.cursor_pos;
+                }
                 (false, _) => self.highlight_range.end = self.cursor_pos,
                 (true, true) => self.highlight_range.start = self.cursor_pos,
                 (true, false) => {
