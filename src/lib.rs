@@ -446,22 +446,32 @@ impl<A, F> Node<A, F> for EditBox
         use self::NodeEvent::*;
         use dct::buttons::MouseButton;
 
+        let allow_char = |c| match c {
+            '\t' |
+            '\r' |
+            '\n' => true,
+            _ => !c.is_control()
+        };
         let mut focus = None;
         match event {
             KeyDown(key, modifiers) => loop {
+                let jump_to_word_boundaries = modifiers.contains(ModifierKeys::CTRL);
                 match key {
                     Key::LArrow => self.string.move_cursor_horizontal(
                         -1,
-                        modifiers.contains(ModifierKeys::CTRL),
+                        jump_to_word_boundaries,
                         modifiers.contains(ModifierKeys::SHIFT)
                     ),
                     Key::RArrow => self.string.move_cursor_horizontal(
                         1,
-                        modifiers.contains(ModifierKeys::CTRL),
+                        jump_to_word_boundaries,
                         modifiers.contains(ModifierKeys::SHIFT)
                     ),
                     Key::UArrow => self.string.move_cursor_vertical(-1),
                     Key::DArrow => self.string.move_cursor_vertical(1),
+                    Key::A if modifiers.contains(ModifierKeys::CTRL) => self.string.select_all(),
+                    Key::Back => self.string.delete_chars(-1, jump_to_word_boundaries),
+                    Key::Delete => self.string.delete_chars(1, jump_to_word_boundaries),
                     _ => break
                 }
                 self.update_tag
@@ -469,29 +479,8 @@ impl<A, F> Node<A, F> for EditBox
                     .mark_update_timer();
                 break;
             },
-            Char('\u{08}') => { // Backspace
-                let cursor_pos = self.string.cursor_pos();
-                if 0 < cursor_pos {
-                    let removed = self.string.render_string.string_mut().remove(cursor_pos - 1);
-                    *self.string.cursor_pos_mut() -= removed.len_utf8();
-                }
-                self.update_tag
-                    .mark_render_self()
-                    .mark_update_timer();
-            }
-            Char('\u{7F}') => { // Delete
-                let cursor_pos = self.string.cursor_pos();
-                if cursor_pos < self.string.render_string.string().len() {
-                    self.string.render_string.string_mut().remove(cursor_pos);
-                }
-                self.update_tag
-                    .mark_render_self()
-                    .mark_update_timer();
-            }
-            Char(c) => {
-                let insert_at = self.string.cursor_pos();
-                self.string.render_string.string_mut().insert(insert_at, c);
-                *self.string.cursor_pos_mut() += c.len_utf8();
+            Char(c) if allow_char(c) => {
+                self.string.insert_char(c);
                 self.update_tag
                     .mark_render_self()
                     .mark_update_timer();
@@ -522,7 +511,10 @@ impl<A, F> Node<A, F> for EditBox
                 self.update_tag.mark_render_self();
             },
             GainFocus  |
-            LoseFocus => {self.update_tag.mark_update_timer();},
+            LoseFocus => {
+                self.string.deselect_all();
+                self.update_tag.mark_update_timer();
+            },
             Timer{name: "cursor_flash", times_triggered, ..} => {
                 self.string.draw_cursor = times_triggered % 2 == 0;
                 self.update_tag.mark_render_self();

@@ -996,4 +996,37 @@ impl EditString {
         self.highlight_range = cmp::min(start_index, end_index)..cmp::max(start_index, end_index);
         self.cursor_pos = end_index;
     }
+
+    pub fn select_all(&mut self) {
+        self.highlight_range = 0..self.render_string.string.len();
+        self.cursor_pos = self.highlight_range.end;
+    }
+
+    pub fn deselect_all(&mut self) {
+        self.highlight_range = 0..0;
+    }
+
+    pub fn insert_char(&mut self, c: char) {
+        if self.highlight_range.len() != 0 {
+            self.render_string.string_mut().drain(self.highlight_range.clone());
+            self.cursor_pos = self.highlight_range.start;
+            self.highlight_range = 0..0;
+        }
+        self.render_string.string_mut().insert(self.cursor_pos, c);
+        self.cursor_pos += c.len_utf8();
+    }
+
+    pub fn delete_chars(&mut self, dist: isize, jump_to_word_boundaries: bool) {
+        let drain_range = if self.highlight_range.len() != 0 {
+            self.highlight_range.clone()
+        } else {
+            let old_pos = self.cursor_pos;
+            self.move_cursor_horizontal(dist, jump_to_word_boundaries, false);
+            let new_pos = self.cursor_pos;
+            cmp::min(old_pos, new_pos)..cmp::max(old_pos, new_pos)
+        };
+        self.render_string.string_mut().drain(drain_range.clone());
+        self.highlight_range = 0..0;
+        self.cursor_pos = drain_range.start;
+    }
 }
