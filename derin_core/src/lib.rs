@@ -31,7 +31,7 @@ use tree::*;
 use timer::{Timer, TimerList};
 use event::{NodeEvent, FocusChange};
 use render::{Renderer, RenderFrame, FrameRectStack};
-use mbseq::MouseButtonSequence;
+use mbseq::{MouseButtonSequence, MouseButtonSequenceTrackPos};
 use node_stack::{NodeStackBase, NodePath, NodeStack};
 use meta_tracker::{MetaEventTracker, MetaDrain, MetaEvent, MetaEventVariant};
 use dct::buttons::{MouseButton, Key, ModifierKeys};
@@ -43,7 +43,7 @@ pub struct Root<A, N, F>
 {
     id: RootID,
     mouse_pos: Point2<i32>,
-    mouse_buttons_down: MouseButtonSequence,
+    mouse_buttons_down: MouseButtonSequenceTrackPos,
     actions: VecDeque<A>,
     node_stack_base: NodeStackBase<A, F>,
     force_full_redraw: bool,
@@ -95,7 +95,7 @@ impl<A, N, F> Root<A, N, F>
         Root {
             id: RootID::new(),
             mouse_pos: Point2::new(-1, -1),
-            mouse_buttons_down: MouseButtonSequence::new(),
+            mouse_buttons_down: MouseButtonSequenceTrackPos::new(),
             actions: VecDeque::new(),
             node_stack_base: NodeStackBase::new(),
             force_full_redraw: false,
@@ -136,7 +136,8 @@ impl<A, N, F> Root<A, N, F>
             macro_rules! mouse_button_arrays {
                 ($update_tag:expr) => {{
                     let mbd_array: ArrayVec<[_; 5]> = mouse_buttons_down.into_iter().collect();
-                    let mbdin_array: ArrayVec<[_; 5]> = $update_tag.mouse_state.get().mouse_button_sequence().into_iter().collect();
+                    let mbdin_array: ArrayVec<[_; 5]> = $update_tag.mouse_state.get().mouse_button_sequence()
+                        .into_iter().filter_map(|b| mouse_buttons_down.contains(b)).collect();
                     (mbd_array, mbdin_array)
                 }}
             }
@@ -361,7 +362,8 @@ impl<A, N, F> Root<A, N, F>
                                                 }
 
                                                 // SEND ENTER ACTION TO CHILD
-                                                let child_mbdin_array: ArrayVec<[_; 5]> = child_mbdin.into_iter().collect();
+                                                let child_mbdin_array: ArrayVec<[_; 5]> = child_mbdin
+                                                .into_iter().filter_map(|b| mouse_buttons_down.contains(b)).collect();
                                                 try_push_action!(
                                                     child, top_path.iter().cloned().chain(Some(child_ident)),
                                                     NodeEvent::MouseEnter {

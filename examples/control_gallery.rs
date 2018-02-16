@@ -140,7 +140,7 @@ fn main() {
                         highlight_text_color: Rgba::new(Nu8(255), Nu8(255), Nu8(255), Nu8(255)),
                         face_size: 16 * 64,
                         tab_size: 8,
-                        justify: Align2::new(Align::Center, Align::Center),
+                        justify: Align2::new(Align::Start, Align::Start),
                     }),
                     icon: Some(Rc::new(derin::theme::Image {
                         pixels: unsafe {

@@ -30,6 +30,10 @@ pub(in gl_render) struct TextTranslate<'a> {
     highlight_range: Range<usize>,
     cursor_pos: Option<usize>,
     string_len: usize,
+
+    font_ascender: i32,
+    font_descender: i32,
+
     highlight_vertex_iter: Option<ImageTranslate>,
     glyph_vertex_iter: Option<ImageTranslate>,
     cursor_vertex_iter: Option<ImageTranslate>
@@ -197,6 +201,10 @@ impl<'a> TextTranslate<'a> {
     ) -> TextTranslate<'a>
         where F: FnOnce(&str, &mut Face<()>) -> &'b ShapedBuffer
     {
+        let face_size = FaceSize::new(text_style.face_size, text_style.face_size);
+        let font_metrics = face.metrics_sized(face_size, dpi).unwrap();
+        let (ascender, descender) = ((font_metrics.ascender / 64) as i32, (font_metrics.descender / 64) as i32);
+
         TextTranslate {
             rect,
             glyph_slice_index: 0,
@@ -205,6 +213,8 @@ impl<'a> TextTranslate<'a> {
             highlight_range,
             cursor_pos,
             string_len: render_string.string.len(),
+            font_ascender: ascender,
+            font_descender: descender,
             highlight_vertex_iter: None,
             glyph_vertex_iter: None,
             cursor_vertex_iter: None
@@ -547,12 +557,54 @@ impl<'a> Iterator for TextTranslate<'a> {
                         ref mut cursor_pos,
                         ref mut glyph_draw,
                         string_len,
+                        font_ascender,
+                        font_descender,
                         ref mut glyph_vertex_iter,
                         ref mut highlight_vertex_iter,
                         ref mut cursor_vertex_iter,
                         rect,
                     } = *self;
-                    let next_glyph = glyph_slice.get(*glyph_slice_index)?;
+                    let next_glyph_opt = glyph_slice.get(*glyph_slice_index);
+
+                    *cursor_vertex_iter = cursor_pos.and_then(|pos| {
+                        let str_index = next_glyph_opt.map(|g| g.str_index).unwrap_or(0);
+                        let highlight_rect_opt = next_glyph_opt.map(|g| g.highlight_rect + rect.min().to_vec());
+                        let base_pos = if pos == str_index {
+                            highlight_rect_opt.map(|r| r.min()).or(Some(
+                                Point2 {
+                                    x: match glyph_draw.text_style.justify.x {
+                                        Align::Start |
+                                        Align::Stretch => 0,
+                                        Align::Center => rect.width() as i32 / 2,
+                                        Align::End => rect.width()
+                                    },
+                                    y: match glyph_draw.text_style.justify.y {
+                                        Align::Center => rect.height() as i32 / 2,
+                                        Align::End => rect.height() as i32,
+                                        _ => 0
+                                    } - font_descender
+                                } + rect.min().to_vec()
+                            ))
+                        } else if pos == str_index + 1 && pos == string_len {
+                            highlight_rect_opt.map(|r| Point2::new(r.max().x, r.min().y))
+                        } else {None};
+
+                        base_pos.map(|pos| {
+                            *cursor_pos = None;
+                            ImageTranslate::new(
+                                BoundBox::new(pos, pos + Vector2::new(1, font_ascender - font_descender)),
+                                glyph_draw.atlas.white().cast().unwrap_or(OffsetBox::new2(0, 0, 0, 0)),
+                                glyph_draw.text_style.color,
+                                RescaleRules::StretchOnPixelCenter
+                            )
+                        })
+                    });
+
+                    let next_glyph = match (next_glyph_opt, self.cursor_vertex_iter.is_some()) {
+                        (Some(next_glyph), _) => next_glyph,
+                        (None, false) => return None,
+                        (None, true) => continue
+                    };
                     *glyph_slice_index += 1;
 
                     let is_highlighted = highlight_range.contains(next_glyph.str_index);
@@ -578,24 +630,6 @@ impl<'a> Iterator for TextTranslate<'a> {
                         },
                         false => None
                     };
-
-                    *cursor_vertex_iter = cursor_pos.and_then(|pos| {
-                        let base_pos = if pos == next_glyph.str_index {
-                            Some(highlight_rect.min())
-                        } else if pos == next_glyph.str_index + 1 && pos == string_len {
-                            Some(Point2::new(highlight_rect.max().x, highlight_rect.min().y))
-                        } else {None};
-
-                        base_pos.map(|pos| {
-                            *cursor_pos = None;
-                            ImageTranslate::new(
-                                BoundBox::new(pos, pos + Vector2::new(1, highlight_rect.height())),
-                                glyph_draw.atlas.white().cast().unwrap_or(OffsetBox::new2(0, 0, 0, 0)),
-                                glyph_draw.text_style.color,
-                                RescaleRules::StretchOnPixelCenter
-                            )
-                        })
-                    });
 
                     continue;
                 }

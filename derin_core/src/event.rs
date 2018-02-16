@@ -2,7 +2,7 @@ use dct::buttons::{MouseButton, Key, ModifierKeys};
 use cgmath::{Point2, Vector2};
 use tree::NodeIdent;
 use arrayvec::ArrayVec;
-use mbseq::MouseButtonSequence;
+use mbseq::{MouseButtonSequence, MouseButtonSequenceTrackPos};
 
 use std::time::{Instant, Duration};
 
@@ -22,35 +22,41 @@ pub enum FocusChange {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MouseDown {
+    pub button: MouseButton,
+    pub down_pos: Point2<i32>
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeEvent<'a> {
     MouseEnter {
         enter_pos: Point2<i32>,
-        buttons_down: &'a [MouseButton],
-        buttons_down_in_node: &'a [MouseButton]
+        buttons_down: &'a [MouseDown],
+        buttons_down_in_node: &'a [MouseDown]
     },
     MouseExit {
         exit_pos: Point2<i32>,
-        buttons_down: &'a [MouseButton],
-        buttons_down_in_node: &'a [MouseButton]
+        buttons_down: &'a [MouseDown],
+        buttons_down_in_node: &'a [MouseDown]
     },
     MouseEnterChild {
         enter_pos: Point2<i32>,
-        buttons_down: &'a [MouseButton],
-        buttons_down_in_node: &'a [MouseButton],
+        buttons_down: &'a [MouseDown],
+        buttons_down_in_node: &'a [MouseDown],
         child: NodeIdent
     },
     MouseExitChild {
         exit_pos: Point2<i32>,
-        buttons_down: &'a [MouseButton],
-        buttons_down_in_node: &'a [MouseButton],
+        buttons_down: &'a [MouseDown],
+        buttons_down_in_node: &'a [MouseDown],
         child: NodeIdent
     },
     MouseMove {
         old: Point2<i32>,
         new: Point2<i32>,
         in_node: bool,
-        buttons_down: &'a [MouseButton],
-        buttons_down_in_node: &'a [MouseButton]
+        buttons_down: &'a [MouseDown],
+        buttons_down_in_node: &'a [MouseDown]
     },
     MouseDown {
         pos: Point2<i32>,
@@ -61,6 +67,7 @@ pub enum NodeEvent<'a> {
         pos: Point2<i32>,
         in_node: bool,
         pressed_in_node: bool,
+        down_pos: Point2<i32>,
         button: MouseButton
     },
     GainFocus,
@@ -117,6 +124,7 @@ pub(crate) enum NodeEventOwned {
         pos: Point2<i32>,
         in_node: bool,
         pressed_in_node: bool,
+        down_pos: Point2<i32>,
         button: MouseButton
     },
     GainFocus,
@@ -172,9 +180,10 @@ impl<'a> NodeEvent<'a> {
                     pos: pos + dir,
                     in_node, button
                 },
-            NodeEvent::MouseUp{ pos, in_node, pressed_in_node, button } =>
+            NodeEvent::MouseUp{ pos, in_node, pressed_in_node, down_pos, button } =>
                 NodeEvent::MouseUp {
                     pos: pos + dir,
+                    down_pos: down_pos + dir,
                     in_node, pressed_in_node, button
                 },
             NodeEvent::GainFocus => NodeEvent::GainFocus,
@@ -189,7 +198,7 @@ impl<'a> NodeEvent<'a> {
 }
 
 impl NodeEventOwned {
-    pub fn as_borrowed<F, R>(&self, func: F) -> R
+    pub fn as_borrowed<F, R>(&self, down_positions: &MouseButtonSequenceTrackPos, func: F) -> R
         where F: FnOnce(NodeEvent) -> R
     {
         let (mbd_array, mbdin_array): (ArrayVec<[_; 5]>, ArrayVec<[_; 5]>);
@@ -199,8 +208,8 @@ impl NodeEventOwned {
             NodeEventOwned::MouseEnterChild{ buttons_down, buttons_down_in_node, .. } |
             NodeEventOwned::MouseExitChild{ buttons_down, buttons_down_in_node, .. } |
             NodeEventOwned::MouseMove{ buttons_down, buttons_down_in_node, .. } => {
-                mbd_array = buttons_down.into_iter().collect();
-                mbdin_array = buttons_down_in_node.into_iter().collect();
+                mbd_array = buttons_down.into_iter().filter_map(|down| down.button).collect(); // RESUME HERE
+                mbdin_array = buttons_down_in_node.into_iter().filter_map(|down| down.button).collect();
             },
             _ => {
                 mbd_array = ArrayVec::new();
@@ -268,8 +277,8 @@ impl<'a> From<NodeEvent<'a>> for NodeEventOwned {
             NodeEvent::MouseEnterChild{ buttons_down, buttons_down_in_node, .. } |
             NodeEvent::MouseExitChild{ buttons_down, buttons_down_in_node, .. } |
             NodeEvent::MouseMove{ buttons_down, buttons_down_in_node, .. } => {
-                mbd_sequence = buttons_down.into_iter().cloned().collect();
-                mbdin_sequence = buttons_down_in_node.into_iter().cloned().collect();
+                mbd_sequence = buttons_down.into_iter().map(|d| d.button).collect();
+                mbdin_sequence = buttons_down_in_node.into_iter().map(|d| d.button).collect();
             },
             _ => {
                 mbd_sequence = MouseButtonSequence::new();
@@ -312,9 +321,9 @@ impl<'a> From<NodeEvent<'a>> for NodeEventOwned {
                 NodeEventOwned::MouseDown {
                     pos, in_node, button
                 },
-            NodeEvent::MouseUp{ pos, in_node, pressed_in_node, button, .. } =>
+            NodeEvent::MouseUp{ pos, in_node, pressed_in_node, down_pos, button, .. } =>
                 NodeEventOwned::MouseUp {
-                    pos, in_node, pressed_in_node, button
+                    pos, in_node, pressed_in_node, down_pos, button
                 },
             NodeEvent::GainFocus => NodeEventOwned::GainFocus,
             NodeEvent::LoseFocus => NodeEventOwned::LoseFocus,
