@@ -29,7 +29,7 @@ use std::collections::VecDeque;
 
 use tree::*;
 use timer::{Timer, TimerList};
-use event::{NodeEvent, FocusChange};
+use event::{NodeEvent, MouseDown, FocusChange};
 use render::{Renderer, RenderFrame, FrameRectStack};
 use mbseq::{MouseButtonSequence, MouseButtonSequenceTrackPos};
 use node_stack::{NodeStackBase, NodePath, NodeStack};
@@ -134,10 +134,14 @@ impl<A, N, F> Root<A, N, F>
 
         gen_events(&mut |event| {
             macro_rules! mouse_button_arrays {
-                ($update_tag:expr) => {{
-                    let mbd_array: ArrayVec<[_; 5]> = mouse_buttons_down.into_iter().collect();
+                ($update_tag:expr, $root_offset:expr) => {{
+                    let shift_button = move |mut down: MouseDown| {
+                        down.down_pos -= $root_offset;
+                        down
+                    };
+                    let mbd_array: ArrayVec<[_; 5]> = mouse_buttons_down.clone().into_iter().map(&shift_button).collect();
                     let mbdin_array: ArrayVec<[_; 5]> = $update_tag.mouse_state.get().mouse_button_sequence()
-                        .into_iter().filter_map(|b| mouse_buttons_down.contains(b)).collect();
+                        .into_iter().filter_map(|b| mouse_buttons_down.contains(b)).map(shift_button).collect();
                     (mbd_array, mbdin_array)
                 }}
             }
@@ -200,7 +204,7 @@ impl<A, N, F> Root<A, N, F>
                 WindowEvent::MouseEnter(enter_pos) => {
                     let NodePath{ node: root_node, path: root_path } = node_stack.move_to_root();
 
-                    let (mbd_array, mbdin_array) = mouse_button_arrays!(root_node.update_tag());
+                    let (mbd_array, mbdin_array) = mouse_button_arrays!(root_node.update_tag(), Vector2::new(0, 0));
                     let top_update_tag = try_push_action!(
                         root_node, root_path.iter().cloned(),
                         NodeEvent::MouseEnter {
@@ -216,7 +220,7 @@ impl<A, N, F> Root<A, N, F>
                 WindowEvent::MouseExit(exit_pos) => {
                     node_stack.drain_to_root(|node, path, parent_offset| {
                         let node_offset = node.bounds().min().to_vec() + parent_offset;
-                        let (mbd_array, mbdin_array) = mouse_button_arrays!(node.update_tag());
+                        let (mbd_array, mbdin_array) = mouse_button_arrays!(node.update_tag(), node_offset);
 
                         let update_tag = try_push_action!(
                             node, path.iter().cloned(),
@@ -265,7 +269,7 @@ impl<A, N, F> Root<A, N, F>
                             };
 
                             // SEND MOVE ACTION
-                            let (mbd_array, mbdin_array) = mouse_button_arrays!(update_tag_copy);
+                            let (mbd_array, mbdin_array) = mouse_button_arrays!(update_tag_copy, top_bounds_offset);
                             {
                                 let NodePath{ node, path } = node_stack.top_mut();
                                 try_push_action!(
@@ -502,7 +506,7 @@ impl<A, N, F> Root<A, N, F>
                                 _ => node_old_pos = Point2::from_value(0xDEDBEEF)
                             }
 
-                            let mbds = mouse_button_arrays!(update_tag);
+                            let mbds = mouse_button_arrays!(update_tag, node_offset);
                             mbd_array = mbds.0;
                             mbdin_array = mbds.1;
                         }
@@ -556,7 +560,7 @@ impl<A, N, F> Root<A, N, F>
                         }
                         top_update_tag
                     });
-                    mouse_buttons_down.push_button(button);
+                    mouse_buttons_down.push_button(button, *mouse_pos);
 
                     node_stack.move_to_hover();
                     node_stack.drain_to_root(|node, _, _| {
@@ -566,6 +570,8 @@ impl<A, N, F> Root<A, N, F>
                 },
                 WindowEvent::MouseUp(button) => {
                     let button_mask = ChildEventRecv::mouse_button_mask(button);
+                    let down_pos_rootspace = mouse_buttons_down.contains(button).map(|down| down.down_pos)
+                        .unwrap_or(Point2::new(0, 0));
                     mouse_buttons_down.release_button(button);
 
                     // Send the mouse up event to the hover node.
@@ -583,6 +589,7 @@ impl<A, N, F> Root<A, N, F>
                             node, path.iter().cloned(),
                             NodeEvent::MouseUp {
                                 pos: *mouse_pos - node_offset,
+                                down_pos: down_pos_rootspace - node_offset,
                                 in_node,
                                 pressed_in_node,
                                 button
@@ -613,6 +620,7 @@ impl<A, N, F> Root<A, N, F>
                                 node, path.iter().cloned(),
                                 NodeEvent::MouseUp {
                                     pos: *mouse_pos - node_offset,
+                                    down_pos: down_pos_rootspace - node_offset,
                                     in_node: bounds_rootspace.contains(*mouse_pos),
                                     pressed_in_node: true,
                                     button
@@ -815,7 +823,7 @@ impl<A, N, F> Root<A, N, F>
                             node_ident_stack.clear();
                             continue;
                         }
-                        event_owned.as_borrowed(|event| {
+                        event_owned.as_borrowed(mouse_buttons_down, |event| {
                             let mut continue_bubble = true;
                             let mut slice_range = node_stack.depth() + 1..;
                             node_stack.drain_to_root_while(|top_node, ident, parent_offset| {

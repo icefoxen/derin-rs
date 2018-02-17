@@ -132,7 +132,6 @@ pub struct EditBox {
     update_tag: UpdateTag,
     bounds: BoundBox<Point2<i32>>,
     string: EditString,
-    select_start: Option<Point2<i32>>
 }
 
 #[derive(Debug, Clone)]
@@ -201,7 +200,6 @@ impl EditBox {
             update_tag: UpdateTag::new(),
             bounds: BoundBox::new2(0, 0, 0, 0),
             string: EditString::new(RenderString::new(string)),
-            select_start: None
         }
     }
 
@@ -488,7 +486,6 @@ impl<A, F> Node<A, F> for EditBox
             MouseDown{in_node: true, button, pos} => {
                 focus = Some(FocusChange::Take);
                 if button == MouseButton::Left {
-                    self.select_start = Some(pos);
                     self.string.select_on_line(Segment::new(pos, pos));
                     self.update_tag
                         .mark_render_self()
@@ -496,7 +493,6 @@ impl<A, F> Node<A, F> for EditBox
                 }
             },
             MouseUp{button: MouseButton::Left, ..} => {
-                self.select_start = None;
                 self.update_tag.mark_render_self();
             }
             MouseDown{in_node: false, ..} => {
@@ -506,9 +502,11 @@ impl<A, F> Node<A, F> for EditBox
                     .mark_render_self()
                     .mark_update_timer();
             },
-            MouseMove{new, ..} if self.select_start.is_some() => {
-                self.string.select_on_line(Segment::new(self.select_start.unwrap(), new));
-                self.update_tag.mark_render_self();
+            MouseMove{new, buttons_down_in_node, ..} => {
+                if let Some(down) = buttons_down_in_node.iter().find(|d| d.button == MouseButton::Left) {
+                    self.string.select_on_line(Segment::new(down.down_pos, new));
+                    self.update_tag.mark_render_self();
+                }
             },
             GainFocus  |
             LoseFocus => {

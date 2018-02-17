@@ -208,8 +208,8 @@ impl NodeEventOwned {
             NodeEventOwned::MouseEnterChild{ buttons_down, buttons_down_in_node, .. } |
             NodeEventOwned::MouseExitChild{ buttons_down, buttons_down_in_node, .. } |
             NodeEventOwned::MouseMove{ buttons_down, buttons_down_in_node, .. } => {
-                mbd_array = buttons_down.into_iter().filter_map(|down| down.button).collect(); // RESUME HERE
-                mbdin_array = buttons_down_in_node.into_iter().filter_map(|down| down.button).collect();
+                mbd_array = buttons_down.into_iter().filter_map(|button| down_positions.contains(button)).collect(); // RESUME HERE
+                mbdin_array = buttons_down_in_node.into_iter().filter_map(|button| down_positions.contains(button)).collect();
             },
             _ => {
                 mbd_array = ArrayVec::new();
@@ -252,9 +252,9 @@ impl NodeEventOwned {
                 NodeEvent::MouseDown {
                     pos, in_node, button
                 },
-            NodeEventOwned::MouseUp{ pos, in_node, pressed_in_node, button, .. } =>
+            NodeEventOwned::MouseUp{ pos, down_pos, in_node, pressed_in_node, button, .. } =>
                 NodeEvent::MouseUp {
-                    pos, in_node, pressed_in_node, button
+                    pos, down_pos, in_node, pressed_in_node, button
                 },
             NodeEventOwned::GainFocus => NodeEvent::GainFocus,
             NodeEventOwned::LoseFocus => NodeEvent::LoseFocus,
