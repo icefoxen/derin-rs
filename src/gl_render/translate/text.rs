@@ -1050,6 +1050,16 @@ impl EditString {
         self.cursor_pos += c.len_utf8();
     }
 
+    pub fn insert_str(&mut self, s: &str) {
+        if self.highlight_range.len() != 0 {
+            self.render_string.string_mut().drain(self.highlight_range.clone());
+            self.cursor_pos = self.highlight_range.start;
+            self.highlight_range = 0..0;
+        }
+        self.render_string.string_mut().insert_str(self.cursor_pos, s);
+        self.cursor_pos += s.len();
+    }
+
     pub fn delete_chars(&mut self, dist: isize, jump_to_word_boundaries: bool) {
         let drain_range = if self.highlight_range.len() != 0 {
             self.highlight_range.clone()

@@ -31,7 +31,7 @@ use tree::*;
 use timer::{Timer, TimerList};
 use event::{NodeEvent, MouseDown, FocusChange};
 use render::{Renderer, RenderFrame, FrameRectStack};
-use mbseq::{MouseButtonSequence, MouseButtonSequenceTrackPos};
+use mbseq::MouseButtonSequenceTrackPos;
 use node_stack::{NodeStackBase, NodePath, NodeStack};
 use meta_tracker::{MetaEventTracker, MetaDrain, MetaEvent, MetaEventVariant};
 use dct::buttons::{MouseButton, Key, ModifierKeys};

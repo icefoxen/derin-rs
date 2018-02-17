@@ -14,6 +14,7 @@ extern crate arrayvec;
 extern crate glyphydog;
 extern crate itertools;
 extern crate unicode_segmentation;
+extern crate clipboard;
 
 pub mod gl_render;
 pub mod theme;
@@ -36,6 +37,7 @@ use cgmath::Point2;
 use cgmath_geometry::{BoundBox, Segment, DimsBox, GeoBox};
 
 use arrayvec::ArrayVec;
+use clipboard::{ClipboardContext, ClipboardProvider};
 
 pub mod geometry {
     pub use cgmath::*;
@@ -454,22 +456,42 @@ impl<A, F> Node<A, F> for EditBox
         match event {
             KeyDown(key, modifiers) => loop {
                 let jump_to_word_boundaries = modifiers.contains(ModifierKeys::CTRL);
-                match key {
-                    Key::LArrow => self.string.move_cursor_horizontal(
+                match (key, modifiers) {
+                    (Key::LArrow, _) => self.string.move_cursor_horizontal(
                         -1,
                         jump_to_word_boundaries,
                         modifiers.contains(ModifierKeys::SHIFT)
                     ),
-                    Key::RArrow => self.string.move_cursor_horizontal(
+                    (Key::RArrow, _) => self.string.move_cursor_horizontal(
                         1,
                         jump_to_word_boundaries,
                         modifiers.contains(ModifierKeys::SHIFT)
                     ),
-                    Key::UArrow => self.string.move_cursor_vertical(-1),
-                    Key::DArrow => self.string.move_cursor_vertical(1),
-                    Key::A if modifiers.contains(ModifierKeys::CTRL) => self.string.select_all(),
-                    Key::Back => self.string.delete_chars(-1, jump_to_word_boundaries),
-                    Key::Delete => self.string.delete_chars(1, jump_to_word_boundaries),
+                    (Key::UArrow, _) => self.string.move_cursor_vertical(-1),
+                    (Key::DArrow, _) => self.string.move_cursor_vertical(1),
+                    (Key::A, ModifierKeys::CTRL) => self.string.select_all(),
+                    (Key::C, ModifierKeys::CTRL) => {
+                        if let Ok(mut clipboard) = ClipboardContext::new() {
+                            let select_range = self.string.highlight_range();
+                            clipboard.set_contents(self.string.render_string.string()[select_range].to_string()).ok();
+                        }
+                    },
+                    (Key::V, ModifierKeys::CTRL) => {
+                        if let Ok(clipboard_conents) = ClipboardContext::new().and_then(|mut c| c.get_contents()) {
+                            self.string.insert_str(&clipboard_conents);
+                        }
+                    },
+                    (Key::X, ModifierKeys::CTRL) => {
+                        if let Ok(mut clipboard) = ClipboardContext::new() {
+                            let highlight_range = self.string.highlight_range();
+                            clipboard.set_contents(self.string.render_string.string()[highlight_range.clone()].to_string()).ok();
+                            if highlight_range.len() > 0 {
+                                self.string.delete_chars(1, false);
+                            }
+                        }
+                    },
+                    (Key::Back, _) => self.string.delete_chars(-1, jump_to_word_boundaries),
+                    (Key::Delete, _) => self.string.delete_chars(1, jump_to_word_boundaries),
                     _ => break
                 }
                 self.update_tag
