@@ -32,8 +32,8 @@ pub enum ButtonState {
     Normal,
     Hover,
     Clicked,
-    Disabled,
-    Defaulted
+    // Disabled,
+    // Defaulted
 }
 
 #[derive(Debug, Clone)]
@@ -98,8 +98,8 @@ impl<F, H> Widget<H::Action, F> for Button<H>
             ButtonState::Normal    => "Button::Normal",
             ButtonState::Hover     => "Button::Hover",
             ButtonState::Clicked   => "Button::Clicked",
-            ButtonState::Disabled  => "Button::Disabled",
-            ButtonState::Defaulted => "Button::Defaulted"
+            // ButtonState::Disabled  => "Button::Disabled",
+            // ButtonState::Defaulted => "Button::Defaulted"
         };
 
         frame.upload_primitives([

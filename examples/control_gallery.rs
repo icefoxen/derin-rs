@@ -1,10 +1,16 @@
 extern crate derin;
 #[macro_use]
 extern crate derin_macros;
+extern crate png;
 
 use derin::{LoopFlow, Window, WindowAttributes};
 use derin::layout::{Margins, LayoutHorizontal, LayoutVertical};
 use derin::widgets::{Button, EditBox, Group, Label};
+use derin::theme::{ThemeWidget, Image, RescaleRules};
+use derin::theme::color::{Rgba, Nu8};
+use derin::geometry::DimsBox;
+
+use std::rc::Rc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GalleryEvent {
@@ -42,7 +48,25 @@ fn main() {
         },
         LayoutHorizontal::new(Margins::new(8, 8, 8, 8), Default::default())
     );
-    let theme = derin::theme::Theme::default();
+    let mut theme = derin::theme::Theme::default();
+    theme.insert_widget(
+        "AddIcon".to_string(),
+        ThemeWidget {
+            text: None,
+            image: Some(Rc::new(Image {
+                pixels: {
+                    let image_png = png::Decoder::new(::std::io::Cursor::new(&include_bytes!("plus_icon.png")[..]));
+                    let (info, mut reader) = image_png.read_info().unwrap();
+                    // Allocate the output buffer.
+                    let mut image = vec![0; info.buffer_size()];
+                    reader.next_frame(&mut image).unwrap();
+                    Rgba::slice_from_raw(Nu8::slice_from_raw(&image)).to_vec()
+                },
+                dims: DimsBox::new2(32, 32),
+                rescale: RescaleRules::Stretch
+            }))
+        }
+    );
 
     let window_attributes = WindowAttributes {
         dimensions: Some((512, 512)),

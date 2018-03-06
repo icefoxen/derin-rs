@@ -16,6 +16,11 @@ use std::collections::HashMap;
 use core::render::Theme as CoreTheme;
 pub use dct::cursor::CursorIcon;
 
+pub mod color {
+    pub use gullery::colors::Rgba;
+    pub use gullery::glsl::Nu8;
+}
+
 /// An RGBA representation of an image.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Image {
