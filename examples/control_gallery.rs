@@ -39,7 +39,7 @@ fn main() {
             button: Button::new(Contents::Image("AddIcon".to_string()), Some(GalleryEvent::NewButton)),
             nested: Group::new(
                 NestedContainer {
-                    label: Label::new("Nested Container".to_string()),
+                    label: Label::new(Contents::Text("Nested Container".to_string())),
                     edit_box: EditBox::new("A Text Box".to_string()),
                     buttons: Vec::new(),
                 },

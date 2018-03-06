@@ -1,3 +1,4 @@
+use widgets::{Contents, ContentsInner};
 use core::event::{EventOps, WidgetEvent, InputState};
 use core::tree::{WidgetIdent, UpdateTag, WidgetSubtrait, WidgetSubtraitMut, Widget};
 use core::render::FrameRectStack;
@@ -13,25 +14,25 @@ use gl_render::{ThemedPrim, PrimFrame, RenderString, RelPoint, Prim};
 pub struct Label {
     update_tag: UpdateTag,
     bounds: BoundBox<Point2<i32>>,
-    string: RenderString
+    contents: ContentsInner
 }
 
 impl Label {
-    pub fn new(string: String) -> Label {
+    pub fn new(contents: Contents<String>) -> Label {
         Label {
             update_tag: UpdateTag::new(),
             bounds: BoundBox::new2(0, 0, 0, 0),
-            string: RenderString::new(string)
+            contents: contents.to_inner()
         }
     }
 
-    pub fn string(&self) -> &str {
-        self.string.string()
+    pub fn contents(&self) -> Contents<&str> {
+        self.contents.borrow()
     }
 
-    pub fn string_mut(&mut self) -> &mut String {
+    pub fn contents_mut(&mut self) -> Contents<&mut String> {
         self.update_tag.mark_render_self();
-        self.string.string_mut()
+        self.contents.borrow_mut()
     }
 }
 
@@ -54,23 +55,12 @@ impl<A, F> Widget<A, F> for Label
     }
 
     fn size_bounds(&self) -> SizeBounds {
-        SizeBounds::new_min(self.string.min_size())
+        SizeBounds::new_min(self.contents.min_size())
     }
 
     fn render(&self, frame: &mut FrameRectStack<F>) {
         frame.upload_primitives([
-            ThemedPrim {
-                theme_path: "Label",
-                min: Point2::new(
-                    RelPoint::new(-1.0, 0),
-                    RelPoint::new(-1.0, 0),
-                ),
-                max: Point2::new(
-                    RelPoint::new( 1.0, 0),
-                    RelPoint::new( 1.0, 0)
-                ),
-                prim: Prim::String(&self.string)
-            }
+            self.contents.to_prim("Label")
         ].iter().cloned());
     }
 
