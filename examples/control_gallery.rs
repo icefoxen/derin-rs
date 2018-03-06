@@ -4,8 +4,8 @@ extern crate derin_macros;
 extern crate png;
 
 use derin::{LoopFlow, Window, WindowAttributes};
-use derin::layout::{Margins, LayoutHorizontal, LayoutVertical};
-use derin::widgets::{Button, EditBox, Group, Label};
+use derin::layout::{Align, Align2, Margins, LayoutHorizontal, LayoutVertical};
+use derin::widgets::{Contents, Button, EditBox, Group, Label};
 use derin::theme::{ThemeWidget, Image, RescaleRules};
 use derin::theme::color::{Rgba, Nu8};
 use derin::geometry::DimsBox;
@@ -36,7 +36,7 @@ struct NestedContainer {
 fn main() {
     let group = Group::new(
         BasicContainer {
-            button: Button::new("Add Button".to_string(), Some(GalleryEvent::NewButton)),
+            button: Button::new(Contents::Image("AddIcon".to_string()), Some(GalleryEvent::NewButton)),
             nested: Group::new(
                 NestedContainer {
                     label: Label::new("Nested Container".to_string()),
@@ -63,7 +63,7 @@ fn main() {
                     Rgba::slice_from_raw(Nu8::slice_from_raw(&image)).to_vec()
                 },
                 dims: DimsBox::new2(32, 32),
-                rescale: RescaleRules::Stretch
+                rescale: RescaleRules::Align(Align2::new(Align::Center, Align::Center))
             }))
         }
     );
@@ -77,7 +77,7 @@ fn main() {
     let mut window = unsafe{ Window::new(window_attributes, group, theme).unwrap() };
     let _: Option<()> = window.run_forever(
         |event, root, _| {
-            root.container_mut().nested.container_mut().buttons.push(Button::new("An added button".to_string(), None));
+            root.container_mut().nested.container_mut().buttons.push(Button::new(Contents::Text("An added button".to_string()), None));
             println!("{:?}", event);
             LoopFlow::Continue
         },

@@ -36,37 +36,58 @@ pub enum ButtonState {
     // Defaulted
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Contents<C> {
+    Text(C),
+    Image(C)
+}
+
+#[derive(Debug, Clone)]
+enum ContentsInner {
+    Text(RenderString),
+    Image(String)
+}
+
 #[derive(Debug, Clone)]
 pub struct Button<H: ButtonHandler> {
     update_tag: UpdateTag,
     bounds: BoundBox<Point2<i32>>,
     state: ButtonState,
     handler: H,
-    string: RenderString,
+    contents: ContentsInner,
     waiting_for_mouseover: bool,
     size_bounds: Cell<SizeBounds>
 }
 
 impl<H: ButtonHandler> Button<H> {
-    pub fn new(string: String, handler: H) -> Button<H> {
+    pub fn new(contents: Contents<String>, handler: H) -> Button<H> {
         Button {
             update_tag: UpdateTag::new(),
             bounds: BoundBox::new2(0, 0, 0, 0),
             state: ButtonState::Normal,
             handler,
-            string: RenderString::new(string),
+            contents: match contents {
+                Contents::Text(t) => ContentsInner::Text(RenderString::new(t)),
+                Contents::Image(i) => ContentsInner::Image(i)
+            },
             waiting_for_mouseover: false,
             size_bounds: Cell::new(SizeBounds::default())
         }
     }
 
-    pub fn string(&self) -> &str {
-        self.string.string()
+    pub fn contents(&self) -> Contents<&str> {
+        match self.contents {
+            ContentsInner::Text(ref t) => Contents::Text(t.string()),
+            ContentsInner::Image(ref s) => Contents::Image(s)
+        }
     }
 
-    pub fn string_mut(&mut self) -> &mut String {
+    pub fn string_mut(&mut self) -> Contents<&mut String> {
         self.update_tag.mark_render_self();
-        self.string.string_mut()
+        match self.contents {
+            ContentsInner::Text(ref mut t) => Contents::Text(t.string_mut()),
+            ContentsInner::Image(ref mut s) => Contents::Image(s)
+        }
     }
 }
 
@@ -115,23 +136,40 @@ impl<F, H> Widget<H::Action, F> for Button<H>
                 ),
                 prim: Prim::Image
             },
-            ThemedPrim {
-                theme_path: image_str,
-                min: Point2::new(
-                    RelPoint::new(-1.0, 0),
-                    RelPoint::new(-1.0, 0),
-                ),
-                max: Point2::new(
-                    RelPoint::new( 1.0, 0),
-                    RelPoint::new( 1.0, 0)
-                ),
-                prim: Prim::String(&self.string)
+            match self.contents {
+                ContentsInner::Text(ref s) => ThemedPrim {
+                    theme_path: image_str,
+                    min: Point2::new(
+                        RelPoint::new(-1.0, 0),
+                        RelPoint::new(-1.0, 0),
+                    ),
+                    max: Point2::new(
+                        RelPoint::new( 1.0, 0),
+                        RelPoint::new( 1.0, 0)
+                    ),
+                    prim: Prim::String(s),
+                },
+                ContentsInner::Image(ref i) => ThemedPrim {
+                    theme_path: &**i,
+                    min: Point2::new(
+                        RelPoint::new(-1.0, 0),
+                        RelPoint::new(-1.0, 0),
+                    ),
+                    max: Point2::new(
+                        RelPoint::new( 1.0, 0),
+                        RelPoint::new( 1.0, 0)
+                    ),
+                    prim: Prim::Image
+                }
             }
         ].iter().cloned());
 
         let mut size_bounds = self.size_bounds.get();
         size_bounds.min = frame.theme().widget_theme(image_str).image.map(|i| i.min_size()).unwrap_or(DimsBox::new2(0, 0));
-        let render_string_min = self.string.min_size();
+        let render_string_min = match self.contents {
+            ContentsInner::Text(ref s) => s.min_size(),
+            _ => DimsBox::new2(0, 0)
+        };
         size_bounds.min.dims.x += render_string_min.width();
         size_bounds.min.dims.y += render_string_min.height();
         self.size_bounds.set(size_bounds);
