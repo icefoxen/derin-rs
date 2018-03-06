@@ -121,7 +121,7 @@ impl<F, H> Widget<H::Action, F> for Button<H>
 
         let mut size_bounds = self.size_bounds.get();
         size_bounds.min = frame.theme().widget_theme(image_str).image.map(|i| i.min_size()).unwrap_or(DimsBox::new2(0, 0));
-        let render_string_min = self.contents.min_size();
+        let render_string_min = self.contents.min_size(frame.theme());
         size_bounds.min.dims.x += render_string_min.width();
         size_bounds.min.dims.y += render_string_min.height();
         self.size_bounds.set(size_bounds);

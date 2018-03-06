@@ -221,7 +221,7 @@ impl Default for Theme {
 impl Image {
     pub fn min_size(&self) -> DimsBox<Point2<i32>> {
         match self.rescale {
-            RescaleRules::Align(_) | // TODO: IMAGE MIN SIZE
+            RescaleRules::Align(_) => self.dims.cast().unwrap_or(DimsBox::new2(i32::max_value(), i32::max_value())),
             RescaleRules::StretchOnPixelCenter |
             RescaleRules::Stretch => DimsBox::new2(0, 0),
             RescaleRules::Slice(margins) => DimsBox::new2(margins.width() as i32, margins.height() as i32),
